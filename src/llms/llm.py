@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: MIT
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 import os
 import httpx
 
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI, AzureChatOpenAI
+from langchain_openai import ChatOpenAI, AzureChatOpenAI, OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_deepseek import ChatDeepSeek
 from typing import get_args
 
@@ -148,3 +149,99 @@ def get_configured_llm_models() -> dict[str, list[str]]:
 # In the future, we will use reasoning_llm and vl_llm for different purposes
 # reasoning_llm = get_llm_by_type("reasoning")
 # vl_llm = get_llm_by_type("vision")
+
+
+def get_embedding_model(
+    provider: str = "openai",
+) -> OpenAIEmbeddings | GoogleGenerativeAIEmbeddings:
+    """
+    Get a LangChain embedding model based on the specified provider.
+
+    Args:
+        provider: The embedding provider to use ("openai" or "anthropic")
+
+    Returns:
+        A configured LangChain embedding model
+
+    Raises:
+        EmbeddingClientError: If the specified provider is not available
+    """
+    conf = load_yaml_config(_get_config_file_path())
+    config_key = "EMBEDDING_MODEL"
+    embedding_conf = conf.get(config_key, {})
+    if not isinstance(embedding_conf, dict):
+        raise ValueError(f"Invalid configuration for {config_key}: {embedding_conf}")
+
+    # Get configuration from environment variables
+    env_conf = _get_env_llm_conf("embedding")
+
+    # Merge configurations, with environment variables taking precedence
+    conf = {**embedding_conf, **env_conf}
+
+    if not conf:
+        raise ValueError(f"No configuration found for {config_key}")
+
+    # For better testability, check if the settings exist first
+    openai_available = bool(conf.get("OPENAI_API_KEY", ""))
+    gemini_available = bool(conf.get("GEMINI_API_KEY", ""))
+
+    # Try preferred provider first
+    if provider == "openai" and openai_available:
+        return OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            api_key=conf.get("OPENAI_API_KEY", ""),
+        )
+    elif provider == "gemini" and gemini_available:
+        return GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004",
+            task_type="SEMANTIC_SIMILARITY",
+            google_api_key=conf.get("GEMINI_API_KEY", ""),
+        )
+
+    raise Exception(
+        "No embedding providers are available. Please configure the API keys in .env file."
+    )
+
+
+async def generate_embedding(
+    text: str, provider: str = "gemini", normalize: bool = True
+) -> List[float] | List[List[float]]:
+    """
+    Generate an embedding vector for the given text.
+
+    Args:
+        text: The text to generate embeddings for
+        provider: The embedding provider to use
+        normalize: Whether to normalize the embedding vector
+
+    Returns:
+        A list of floats representing the embedding vector
+
+    Raises:
+        EmbeddingClientError: If embedding generation fails
+    """
+    if not text or not text.strip():
+        raise Exception("Cannot generate embedding for empty text")
+
+    try:
+        embedding_model = get_embedding_model(provider)
+
+        # Generate embedding
+        embeddings = await embedding_model.aembed_documents([text.strip()])
+
+        if not embeddings or len(embeddings) == 0:
+            raise Exception("Failed to generate embedding - empty result")
+
+        embedding = embeddings[0]
+
+        # Normalize if requested
+        if normalize:
+            # Calculate magnitude
+            magnitude = sum(x * x for x in embedding) ** 0.5
+            if magnitude > 0:
+                embedding = [x / magnitude for x in embedding]
+
+        return embedding
+
+    except Exception as e:
+        raise Exception(f"Failed to generate embedding: {str(e)}")

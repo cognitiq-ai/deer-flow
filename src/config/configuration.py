@@ -59,6 +59,20 @@ class Configuration:
     report_style: str = ReportStyle.ACADEMIC.value  # Report style
     enable_deep_thinking: bool = False  # Whether to enable deep thinking
 
+    # Knowledge Graph
+    reflection_confidence_threshold = 0.8  # Minimum reflection confidence threshold
+    max_search_queries = 2  # Maximum search queries per iteration
+    max_extract_urls = 2  # Maximum URLs to extract per iteration
+    min_confidence_threshold = (
+        0.7  # Minimum confidence threshold for concept definition
+    )
+    max_iteration_main = 5  # Maximum number of main iterations
+    max_focus_concepts_per_iteration = (
+        5  # Maximum number of focus concepts per iteration
+    )
+    max_parallel_inner_loops = 5  # Maximum number of parallel inner loops
+    max_definition_research_loops = 100  # Maximum number of definition research loops
+
     @classmethod
     def from_runnable_config(
         cls, config: Optional[RunnableConfig] = None
