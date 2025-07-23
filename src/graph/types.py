@@ -6,6 +6,7 @@ from langgraph.graph import MessagesState
 
 from src.prompts.planner_model import Plan
 from src.rag import Resource
+from .schemas import ReportOutput
 
 
 class State(MessagesState):
@@ -18,7 +19,7 @@ class State(MessagesState):
     resources: list[Resource] = []
     plan_iterations: int = 0
     current_plan: Plan | str = None
-    final_report: str = ""
+    final_report: ReportOutput = ReportOutput(content="")
     auto_accepted_plan: bool = False
     enable_background_investigation: bool = True
     background_investigation_results: str = None

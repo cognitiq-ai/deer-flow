@@ -29,6 +29,7 @@ from src.prompts.template import apply_prompt_template
 from src.utils.json_utils import repair_json_output
 
 from .types import State
+from .schemas import ReportOutput
 from ..config import SELECTED_SEARCH_ENGINE, SearchEngine
 
 logger = logging.getLogger(__name__)
@@ -289,8 +290,12 @@ def reporter_node(state: State, config: RunnableConfig):
             )
         )
     logger.debug(f"Current invoke messages: {invoke_messages}")
-    response = get_llm_by_type(AGENT_LLM_MAP["reporter"]).invoke(invoke_messages)
-    response_content = response.content
+
+    # Use structured output for the reporter
+    llm = get_llm_by_type(AGENT_LLM_MAP["reporter"])
+    structured_llm = llm.with_structured_output(ReportOutput)
+    response_content = structured_llm.invoke(invoke_messages)
+
     logger.info(f"reporter response: {response_content}")
 
     return {"final_report": response_content}

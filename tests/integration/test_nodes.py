@@ -769,19 +769,25 @@ def test_reporter_node_basic(
         patch("src.graph.nodes.get_llm_by_type") as mock_get_llm,
     ):
         mock_llm = MagicMock()
-        mock_llm.invoke.return_value = make_mock_llm_response_reporter(
-            "Final Report Content"
-        )
+        mock_structured_llm = MagicMock()
+
+        # Mock the structured output
+        mock_report_output = MagicMock()
+        mock_report_output.content = "Final Report Content"
+        mock_structured_llm.invoke.return_value = mock_report_output
+
+        mock_llm.with_structured_output.return_value = mock_structured_llm
         mock_get_llm.return_value = mock_llm
 
         result = reporter_node(mock_state_reporter, MagicMock())
         assert isinstance(result, dict)
         assert "final_report" in result
-        assert result["final_report"] == "Final Report Content"
+        assert result["final_report"].content == "Final Report Content"
         # Should call apply_prompt_template with correct arguments
         patch_apply_prompt_template_reporter.assert_called()
-        # Should call invoke on the LLM
-        mock_llm.invoke.assert_called()
+        # Should call with_structured_output and invoke on the LLM
+        mock_llm.with_structured_output.assert_called()
+        mock_structured_llm.invoke.assert_called()
 
 
 def test_reporter_node_with_observations(
@@ -796,19 +802,26 @@ def test_reporter_node_with_observations(
         patch("src.graph.nodes.get_llm_by_type") as mock_get_llm,
     ):
         mock_llm = MagicMock()
-        mock_llm.invoke.return_value = make_mock_llm_response_reporter(
-            "Report with Observations"
-        )
+        mock_structured_llm = MagicMock()
+
+        # Mock the structured output
+        mock_report_output = MagicMock()
+        mock_report_output.content = "Report with Observations"
+        mock_structured_llm.invoke.return_value = mock_report_output
+
+        mock_llm.with_structured_output.return_value = mock_structured_llm
         mock_get_llm.return_value = mock_llm
 
         result = reporter_node(mock_state_reporter_with_observations, MagicMock())
         assert isinstance(result, dict)
         assert "final_report" in result
-        assert result["final_report"] == "Report with Observations"
+        assert result["final_report"].content == "Report with Observations"
+        assert "messages" in result
         # Should call apply_prompt_template with correct arguments
         patch_apply_prompt_template_reporter.assert_called()
-        # Should call invoke on the LLM
-        mock_llm.invoke.assert_called()
+        # Should call with_structured_output and invoke on the LLM
+        mock_llm.with_structured_output.assert_called()
+        mock_structured_llm.invoke.assert_called()
 
 
 def test_reporter_node_locale_default(
@@ -829,15 +842,21 @@ def test_reporter_node_locale_default(
         patch("src.graph.nodes.get_llm_by_type") as mock_get_llm,
     ):
         mock_llm = MagicMock()
-        mock_llm.invoke.return_value = make_mock_llm_response_reporter(
-            "Default Locale Report"
-        )
+        mock_structured_llm = MagicMock()
+
+        # Mock the structured output
+        mock_report_output = MagicMock()
+        mock_report_output.content = "Default Locale Report"
+        mock_structured_llm.invoke.return_value = mock_report_output
+
+        mock_llm.with_structured_output.return_value = mock_structured_llm
         mock_get_llm.return_value = mock_llm
 
         result = reporter_node(state, MagicMock())
         assert isinstance(result, dict)
         assert "final_report" in result
-        assert result["final_report"] == "Default Locale Report"
+        assert result["final_report"].content == "Default Locale Report"
+        assert "messages" in result
 
 
 # Create the real Step class for the tests
