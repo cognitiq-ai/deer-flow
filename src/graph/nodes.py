@@ -28,7 +28,7 @@ from src.tools.search import LoggedTavilySearch
 from src.utils.json_utils import repair_json_output
 
 from .types import State
-from .schemas import ReportOutput
+from .schemas import ReportOutput, EducationalReportOutput
 from ..config import SELECTED_SEARCH_ENGINE, SearchEngine
 from .types import State
 
@@ -292,16 +292,25 @@ def reporter_node(state: State, config: RunnableConfig):
                 name="observation",
             )
         )
-    logger.debug(f"Current invoke messages: {invoke_messages}")
+        logger.debug(f"Current invoke messages: {invoke_messages}")
 
-    # Use structured output for the reporter
+    # Use structured output for the reporter - choose schema based on report style
     llm = get_llm_by_type(AGENT_LLM_MAP["reporter"])
-    structured_llm = llm.with_structured_output(ReportOutput)
+    report_style = configurable.report_style
+
+    if report_style == "educational":
+        structured_llm = llm.with_structured_output(EducationalReportOutput)
+    else:
+        structured_llm = llm.with_structured_output(ReportOutput)
+
     response_content = structured_llm.invoke(invoke_messages)
 
     logger.info(f"reporter response: {response_content}")
 
-    return {"final_report": response_content}
+    return {
+        "final_report": response_content,
+        "messages": [AIMessage(content=response_content.content, name="reporter")],
+    }
 
 
 def research_team_node(state: State):
