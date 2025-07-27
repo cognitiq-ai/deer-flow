@@ -75,7 +75,7 @@ def test_state_initialization():
     assert State.observations == []
     assert State.plan_iterations == 0
     assert State.current_plan is None
-    assert State.final_report == ""
+    assert State.final_report.content == ""
     assert State.auto_accepted_plan is False
     assert State.enable_background_investigation is True
     assert State.background_investigation_results is None

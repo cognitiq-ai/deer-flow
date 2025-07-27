@@ -7,3 +7,4 @@ class ReportStyle(enum.Enum):
     NEWS = "news"
     SOCIAL_MEDIA = "social_media"
     STRATEGIC_INVESTMENT = "strategic_investment"
+    EDUCATIONAL = "educational"

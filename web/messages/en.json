@@ -68,7 +68,9 @@
       "socialMedia": "Social Media",
       "socialMediaDesc": "Concise, attention-grabbing, and shareable",
       "strategicInvestment": "Strategic Investment",
-      "strategicInvestmentDesc": "Deep, comprehensive analysis for strategic investment institutions with actionable insights"
+      "strategicInvestmentDesc": "Deep, comprehensive analysis for strategic investment institutions with actionable insights",
+      "educational": "Educational",
+      "educationalDesc": "Structured learning content with objectives, examples, and exercises"
     }
   },
   "footer": {
