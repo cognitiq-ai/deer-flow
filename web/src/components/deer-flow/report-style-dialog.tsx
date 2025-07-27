@@ -3,7 +3,7 @@
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { Check, FileText, Newspaper, Users, GraduationCap } from "lucide-react";
+import { Check, FileText, Newspaper, Users, GraduationCap, BookOpen } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -44,6 +44,12 @@ const REPORT_STYLES = [
     descriptionKey: "socialMediaDesc",
     icon: Users,
   },
+  {
+    value: "educational" as const,
+    labelKey: "educational",
+    descriptionKey: "educationalDesc",
+    icon: BookOpen,
+  },
 ];
 
 export function ReportStyleDialog() {
@@ -52,7 +58,7 @@ export function ReportStyleDialog() {
   const currentStyle = useSettingsStore((state) => state.general.reportStyle);
 
   const handleStyleChange = (
-    style: "academic" | "popular_science" | "news" | "social_media",
+    style: "academic" | "popular_science" | "news" | "social_media" | "educational",
   ) => {
     setReportStyle(style);
     setOpen(false);

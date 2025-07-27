@@ -66,7 +66,9 @@
       "news": "News",
       "newsDesc": "Factual, concise, and impartial journalistic style",
       "socialMedia": "Social Media",
-      "socialMediaDesc": "Concise, attention-grabbing, and shareable"
+      "socialMediaDesc": "Concise, attention-grabbing, and shareable",
+      "educational": "Educational",
+      "educationalDesc": "Structured learning content with objectives, examples, and exercises"
     }
   },
   "footer": {
