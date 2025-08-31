@@ -1005,7 +1005,7 @@ def criteria_check_and_next_focus_definition(
 
 async def session_orchestrator_and_main_loop(
     user_query_context_data: Dict[str, Any],
-) -> Tuple[str, Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     KG1: Session_Orchestrator_And_Main_Loop
 
@@ -1045,9 +1045,7 @@ async def session_orchestrator_and_main_loop(
 
         if identified_goal is None:
             session_log_global.log("ERROR", "KG1: Failed to identify goal node")
-            return "FAILURE_GOAL_UNDEFINABLE", _generate_session_summary(
-                session_log_global, {}
-            )
+            return _generate_session_summary(session_log_global, {})
 
         gn_user_session = identified_goal
         awg_session = initial_awg
@@ -1212,11 +1210,14 @@ async def session_orchestrator_and_main_loop(
                 decision_criteria = "STOP_ERROR"
                 focus_concepts_next_iteration = []
 
+        order_nodes = False
         # Determine Overall Session Status based on why the loop exited
         if decision_criteria == "STOP_PREREQUISITES_MET":
             overall_session_status = "SUCCESS_PREREQUISITES_MET"
+            order_nodes = True
         elif decision_criteria == "STOP_MAX_ITERATIONS":
             overall_session_status = "PARTIAL_MAX_ITERATIONS"
+            order_nodes = True
         elif decision_criteria == "STOP_NO_PROGRESS":
             overall_session_status = "PARTIAL_NO_PROGRESS"
         elif decision_criteria == "STOP_ERROR":
@@ -1224,8 +1225,13 @@ async def session_orchestrator_and_main_loop(
         elif iteration_main_current >= config.max_iteration_main:
             # Loop exited due to max iterations reached
             overall_session_status = "PARTIAL_MAX_ITERATIONS"
+            order_nodes = True
         else:
             overall_session_status = "UNKNOWN"
+
+        ordered_nodes = []
+        if order_nodes:
+            ordered_nodes = awg_session.topological_order()
 
         session_log_global.log(
             "INFO",
@@ -1246,6 +1252,7 @@ async def session_orchestrator_and_main_loop(
                 "final_awg": awg_session.model_dump(),
                 "total_iterations": iteration_main_current,
                 "overall_status": overall_session_status,
+                "ordered_nodes": ordered_nodes,
             },
         )
 
@@ -1253,20 +1260,20 @@ async def session_orchestrator_and_main_loop(
             "INFO", "KG1: Session orchestrator completed successfully"
         )
 
-        return overall_session_status, session_summary
+        return session_summary
 
     except Exception as e:
         session_log_global.log(
             "ERROR", f"KG1: Critical error in session orchestrator: {e}"
         )
-        return "FAILURE_CRITICAL_ERROR", _generate_session_summary(
-            session_log_global, {}
+        return _generate_session_summary(
+            session_log_global, {"overall_status": overall_session_status}
         )
 
 
 def session_orchestrator_celery_task(
     user_query_context_data: Dict[str, Any],
-) -> Tuple[str, Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     Celery task wrapper for session_orchestrator_and_main_loop.
 
@@ -1274,7 +1281,7 @@ def session_orchestrator_celery_task(
         user_query_context_data: Serialized UserQueryContext data
 
     Returns:
-        Tuple of (final_session_outcome, session_summary)
+        Dictionary containing session summary
     """
     return asyncio.run(session_orchestrator_and_main_loop(user_query_context_data))
 
