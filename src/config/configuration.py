@@ -66,6 +66,18 @@ class Configuration:
     max_parallel_inner_loops = 5  # Maximum number of parallel inner loops
     max_definition_research_loops = 100  # Maximum number of definition research loops
 
+    # Educational Content Generation
+    enable_educational_content_generation = (
+        True  # Whether to generate educational content after KG construction
+    )
+    educational_content_timeout = (
+        600  # Timeout for educational content generation per concept (seconds)
+    )
+    educational_content_max_plan_iterations = (
+        2  # Max plan iterations for educational content deer-flow
+    )
+    educational_content_max_step_num = 5  # Max steps for educational content deer-flow
+
     @classmethod
     def from_runnable_config(
         cls, config: Optional[RunnableConfig] = None
