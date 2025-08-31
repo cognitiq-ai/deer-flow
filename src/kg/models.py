@@ -61,6 +61,24 @@ class RelationshipType(str, Enum):
         else:
             return "None of the above relationships exist between these two concepts"
 
+    @property
+    def reorder(self) -> bool:
+        """
+        Defined as the final node ordering per relationship type
+        Aligns all relationship types to common semantic meaning
+        HAS_PREREQUISITE: child -> parent
+        IS_PART_OF: parent -> child
+        IS_TYPE_OF: child -> parent
+        """
+        if self == RelationshipType.HAS_PREREQUISITE:
+            return True
+        elif self == RelationshipType.IS_PART_OF:
+            return False
+        elif self == RelationshipType.IS_TYPE_OF:
+            return True
+        else:
+            return True
+
 
 class ResearchSource(BaseModel):
     """
@@ -376,12 +394,48 @@ class AgentWorkingGraph(BaseModel):
         if relationship_id in self.relationships:
             del self.relationships[relationship_id]
 
-    def to_networkx_graph(self) -> nx.DiGraph:
+    def get_subgraph(self, rel_type: RelationshipType) -> "AgentWorkingGraph":
+        """Get the subgraph of the working graph for a given relationship type."""
+        # All relationships of type `rel_type`
+        relationships = {
+            relationship: self.relationships[relationship]
+            for relationship in self.relationships.keys()
+            if self.relationships[relationship].type == rel_type
+        }
+        # All nodes from `this.relationships`
+        nodes = {
+            relationship.source_node_id: self.nodes[relationship.source_node_id]
+            for relationship in relationships.values()
+        }
+        nodes.update(
+            {
+                relationship.target_node_id: self.nodes[relationship.target_node_id]
+                for relationship in relationships.values()
+            }
+        )
+        # Create a new AgentWorkingGraph with the nodes and relationships
+        return AgentWorkingGraph(nodes, relationships)
+
+    def to_networkx_graph(
+        self, rel_type: Optional[RelationshipType] = None
+    ) -> nx.DiGraph:
         """Convert the working graph to a NetworkX directed graph."""
         G = nx.DiGraph()
 
+        if rel_type is not None:
+            edges = [
+                edge for edge in self.relationships.values() if edge.type == rel_type
+            ]
+            nodes = [edge.source_node_id for edge in edges] + [
+                edge.target_node_id for edge in edges
+            ]
+            nodes = {node: self.nodes[node] for node in set(nodes)}
+        else:
+            nodes = self.nodes
+            edges = self.relationships
+
         # Add nodes with their data
-        for node_id, node in self.nodes.items():
+        for node_id, node in nodes.items():
             G.add_node(
                 node_id,
                 type=node.node_type,
@@ -390,7 +444,7 @@ class AgentWorkingGraph(BaseModel):
             )
 
         # Add edges with their data
-        for rel_id, relationship in self.relationships.items():
+        for rel_id, relationship in edges.items():
             G.add_edge(
                 relationship.source_node_id,
                 relationship.target_node_id,
@@ -651,7 +705,7 @@ class AgentWorkingGraph(BaseModel):
         Returns:
             List of node IDs that are prerequisites (in topological order if possible)
         """
-        G = self.to_networkx_graph()
+        G = self.to_networkx_graph(RelationshipType.HAS_PREREQUISITE)
 
         if goal_node_id not in G:
             return []
@@ -667,9 +721,8 @@ class AgentWorkingGraph(BaseModel):
 
             # Look for outgoing HAS_PREREQUISITE edges
             for _, target_id, edge_data in G.edges(node_id, data=True):
-                if edge_data["type"] == RelationshipType.HAS_PREREQUISITE:
-                    prerequisite_nodes.append(target_id)
-                    dfs_prerequisites(target_id, visited)
+                prerequisite_nodes.append(target_id)
+                dfs_prerequisites(target_id, visited)
 
         dfs_prerequisites(goal_node_id, set())
         return prerequisite_nodes
@@ -802,43 +855,6 @@ class AgentWorkingGraph(BaseModel):
 
         return concept1
 
-    def is_cyclic_relationship(
-        self, new_relationship: Relationship, relationship_type: RelationshipType
-    ) -> bool:
-        """
-        Check if adding a new relationship would create a cycle for a specific relationship type.
-
-        Args:
-            new_relationship: The relationship to check
-            relationship_type: The type of relationship to check for cycles
-
-        Returns:
-            True if adding the relationship would create a cycle
-        """
-        # Create a temporary graph with only the specified relationship type
-        G = nx.DiGraph()
-
-        # Add all nodes
-        for node_id in self.nodes.keys():
-            G.add_node(node_id)
-
-        # Add existing relationships of the specified type
-        for rel in self.relationships.values():
-            if rel.type == relationship_type:
-                G.add_edge(rel.source_node_id, rel.target_node_id)
-
-        # Add the new relationship temporarily
-        G.add_edge(new_relationship.source_node_id, new_relationship.target_node_id)
-
-        # Check if this creates a cycle
-        try:
-            # If the graph is acyclic, this will succeed
-            list(nx.topological_sort(G))
-            return False
-        except (nx.NetworkXError, nx.NetworkXUnfeasible):
-            # A cycle exists
-            return True
-
     def get_relationships(
         self, relationship_type: RelationshipType
     ) -> List[Relationship]:
@@ -896,7 +912,7 @@ class AgentWorkingGraph(BaseModel):
 
         return False  # Could not resolve cycle by removing relationships
 
-    def resolve_cycles(self) -> List[str]:
+    def resolve_cycles(self, combine: bool = False) -> List[str]:
         """
         Preemptively resolve potential cycles in the AWG by removing lowest confidence relationships.
 
@@ -909,10 +925,11 @@ class AgentWorkingGraph(BaseModel):
         removed_rel_ids = []
         cycle_prone_types = [
             RelationshipType.HAS_PREREQUISITE,
-            RelationshipType.IS_TYPE_OF,
             RelationshipType.IS_PART_OF,
+            RelationshipType.IS_TYPE_OF,
         ]
 
+        G = nx.DiGraph()
         for rel_type in cycle_prone_types:
             # Keep trying to remove cycle-causing relationships until no more cycles exist
             max_attempts = 10  # Prevent infinite loops
@@ -920,13 +937,15 @@ class AgentWorkingGraph(BaseModel):
 
             while attempt < max_attempts:
                 # Check if there are cycles for this relationship type
-                G = nx.DiGraph()
-                for node_id in self.nodes.keys():
-                    G.add_node(node_id)
-
-                for rel in self.relationships.values():
-                    if rel.type == rel_type:
-                        G.add_edge(rel.source_node_id, rel.target_node_id)
+                if combine:
+                    curr = self.to_networkx_graph(rel_type)
+                    G = (
+                        nx.compose(curr.reverse(), G)
+                        if rel_type.reorder
+                        else nx.compose(curr, G)
+                    )
+                else:
+                    G = self.to_networkx_graph(rel_type)
 
                 try:
                     # If this succeeds, no cycle exists
@@ -950,6 +969,14 @@ class AgentWorkingGraph(BaseModel):
                 attempt += 1
 
         return removed_rel_ids
+
+    def topological_order(self) -> List[str]:
+        """
+        Generates a topological ordering of the nodes
+        """
+        self.resolve_cycles(combine=True)
+        ordered = list(nx.topological_sort(self.to_networkx_graph(combine=True)))
+        return ordered
 
     def get_definitions(self) -> Dict[str, str]:
         """

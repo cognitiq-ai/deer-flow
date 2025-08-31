@@ -31,6 +31,8 @@ from src.prose.graph.builder import build_graph as build_prose_graph
 from src.rag.builder import build_retriever
 from src.rag.milvus import load_examples
 from src.rag.retriever import Resource
+from src.server.kg_request import KGSessionRequest
+from src.kg.kg_agent import session_orchestrator_and_main_loop
 from src.server.chat_request import (
     ChatRequest,
     EnhancePromptRequest,
@@ -541,6 +543,16 @@ async def enhance_prompt(request: EnhancePromptRequest):
         return {"result": final_state["output"]}
     except Exception as e:
         logger.exception(f"Error occurred during prompt enhancement: {str(e)}")
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_DETAIL)
+
+
+@app.post("/api/kg/session")
+async def run_kg_session(request: KGSessionRequest):
+    try:
+        summary = await session_orchestrator_and_main_loop(request.model_dump())
+        return summary
+    except Exception as e:
+        logger.exception(f"Error occurred during KG session: {str(e)}")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_DETAIL)
 
 
