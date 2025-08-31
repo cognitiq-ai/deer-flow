@@ -8,14 +8,6 @@ from langchain_core.messages import AnyMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Annotated
 
-from src.prompts.kg.prompts import system_message_research
-from src.kg.schemas import (
-    ConceptDefinitionOutput,
-    ConceptPrerequisiteOutput,
-    DefinitionResearchReflection,
-    PrerequisiteResearchReflection,
-)
-from src.kg.utils import get_current_date, update_messages
 from src.kg.models import (
     AgentWorkingGraph,
     ConceptNode,
@@ -24,6 +16,14 @@ from src.kg.models import (
     ResearchOutput,
     ResearchSource,
 )
+from src.kg.schemas import (
+    ConceptDefinitionOutput,
+    ConceptPrerequisiteOutput,
+    DefinitionResearchReflection,
+    PrerequisiteResearchReflection,
+)
+from src.kg.utils import get_current_date, update_messages
+from src.prompts.kg.prompts import system_message_research
 
 
 class ConceptResearchState(BaseModel):

@@ -7,14 +7,14 @@ from typing import Any, Dict, List, Union
 
 from cleantext import clean
 from langchain_core.messages import AnyMessage
+from tika import parser
 from trafilatura.downloads import fetch_response
 
+from src.kg.models import ConceptNode
 from src.kg.schemas import (
     DefinitionResearchReflection,
     PrerequisiteResearchReflection,
 )
-from src.kg.models import ConceptNode
-from tika import parser
 
 # Set tika path as a file://
 os.environ["TIKA_SERVER_JAR"] = "file://" + os.path.join(

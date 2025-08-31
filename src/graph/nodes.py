@@ -27,9 +27,8 @@ from src.tools import (
 from src.tools.search import LoggedTavilySearch
 from src.utils.json_utils import repair_json_output
 
-from .types import State
-from .schemas import ReportOutput, EducationalReportOutput
 from ..config import SELECTED_SEARCH_ENGINE, SearchEngine
+from .schemas import EducationalReportOutput, ReportOutput
 from .types import State
 
 logger = logging.getLogger(__name__)
@@ -209,15 +208,46 @@ def human_feedback_node(
 
 def coordinator_node(
     state: State, config: RunnableConfig
-) -> Command[Literal["planner", "background_investigator", "__end__"]]:
+) -> Command[Literal["planner", "background_investigator", "report_editor", "__end__"]]:
     """Coordinator node that communicate with customers."""
     logger.info("Coordinator talking.")
     configurable = Configuration.from_runnable_config(config)
     messages = apply_prompt_template("coordinator", state)
+
+    # Check if there's an existing final report
+    final_report = state.get("final_report")
+    has_existing_report = final_report and (
+        (hasattr(final_report, "content") and final_report.content.strip())
+        or (isinstance(final_report, str) and final_report.strip())
+    )
+
+    # Simple logic: existing report = edit mode, no report = research mode
+    if has_existing_report:
+        logger.info("Existing report detected - this is an edit request")
+        goto = "report_editor"
+        edit_request = (
+            state.get("messages", [])[-1].content if state.get("messages") else ""
+        )
+        locale = state.get("locale", "en-US")
+        messages = state.get("messages", [])
+
+        return Command(
+            update={
+                "messages": messages,
+                "locale": locale,
+                "edit_request": edit_request,
+                "editing_mode": True,
+                "resources": configurable.resources,
+            },
+            goto=goto,
+        )
+    else:
+        # If no existing report, bind planner tool for new research
+        tools = [handoff_to_planner]
+        logger.info("No existing report - binding only planner tool")
+
     response = (
-        get_llm_by_type(AGENT_LLM_MAP["coordinator"])
-        .bind_tools([handoff_to_planner])
-        .invoke(messages)
+        get_llm_by_type(AGENT_LLM_MAP["coordinator"]).bind_tools(tools).invoke(messages)
     )
     logger.debug(f"Current state messages: {state['messages']}")
 
@@ -310,6 +340,79 @@ def reporter_node(state: State, config: RunnableConfig):
     return {
         "final_report": response_content,
         "messages": [AIMessage(content=response_content.content, name="reporter")],
+    }
+
+
+def report_editor_node(state: State, config: RunnableConfig):
+    """Report editor node that modifies existing reports based on user requests."""
+    logger.info("Report editor editing existing report")
+    configurable = Configuration.from_runnable_config(config)
+
+    current_report = state.get("final_report")
+    edit_request = state.get("edit_request")
+
+    if not current_report or not edit_request:
+        logger.warning("Missing current report or edit request")
+        return {
+            "edit_request": None,
+            "editing_mode": False,
+        }
+
+    # Prepare input for the report editor with complete research context
+    input_ = {
+        "current_report": current_report.content
+        if hasattr(current_report, "content")
+        else str(current_report),
+        "edit_request": edit_request,
+        "locale": state.get("locale", "en-US"),
+        "messages": [],
+        "observations": state.get("observations", []),
+        "current_plan": state.get("current_plan"),
+        "research_topic": state.get("research_topic", ""),
+    }
+
+    # Apply the report editor prompt template
+    invoke_messages = apply_prompt_template("report_editor", input_, configurable)
+
+    # Add the current report content, research context, and edit request as user input
+    context_info = f'Please edit the following report according to this request: "{edit_request}"\n\nIMPORTANT: Edit the actual content below, do not create placeholder content.\n\n'
+
+    # Add research context if available
+    observations = state.get("observations", [])
+    if observations:
+        context_info += "RESEARCH CONTEXT AVAILABLE:\n"
+        for i, obs in enumerate(observations, 1):
+            context_info += f"{i}. {obs}\n"
+        context_info += "\nUse this research context to inform your edits.\n\n"
+
+    context_info += f"ORIGINAL REPORT TO EDIT:\n\n{input_['current_report']}"
+
+    invoke_messages.append(
+        HumanMessage(
+            content=context_info,
+            name="user",
+        )
+    )
+
+    # Use the same LLM configuration as the reporter
+    llm = get_llm_by_type(AGENT_LLM_MAP["reporter"])
+    report_style = configurable.report_style
+
+    # Use structured output for the editor - same schema as reporter
+    if report_style == "educational":
+        structured_llm = llm.with_structured_output(EducationalReportOutput)
+    else:
+        structured_llm = llm.with_structured_output(ReportOutput)
+
+    response_content = structured_llm.invoke(invoke_messages)
+
+    logger.info(f"Report editor response: {response_content}")
+
+    return {
+        "final_report": response_content,
+        "messages": [AIMessage(content=response_content.content, name="reporter")],
+        "edit_request": None,  # Clear the edit request after processing
+        "editing_mode": False,  # Exit editing mode
     }
 
 

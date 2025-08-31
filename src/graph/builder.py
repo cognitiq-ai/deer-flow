@@ -12,6 +12,7 @@ from .nodes import (
     coordinator_node,
     human_feedback_node,
     planner_node,
+    report_editor_node,
     reporter_node,
     research_team_node,
     researcher_node,
@@ -44,6 +45,25 @@ def continue_to_running_research_team(state: State):
     return "planner"
 
 
+def continue_to_editing_or_end(state: State):
+    """Determine whether to continue editing or end the workflow."""
+    edit_request = state.get("edit_request")
+    if edit_request and edit_request.strip():
+        return "report_editor"
+    return END
+
+
+def route_from_coordinator(state: State):
+    """Route from coordinator based on edit_request or research_topic."""
+    if state.get("edit_request"):
+        return "report_editor"
+    elif state.get("research_topic"):
+        if state.get("enable_background_investigation"):
+            return "background_investigator"
+        return "planner"
+    return "__end__"
+
+
 def _build_base_graph():
     """Build and return the base state graph with all nodes and edges."""
     builder = StateGraph(State)
@@ -52,17 +72,30 @@ def _build_base_graph():
     builder.add_node("background_investigator", background_investigation_node)
     builder.add_node("planner", planner_node)
     builder.add_node("reporter", reporter_node)
+    builder.add_node("report_editor", report_editor_node)
     builder.add_node("research_team", research_team_node)
     builder.add_node("researcher", researcher_node)
     builder.add_node("coder", coder_node)
     builder.add_node("human_feedback", human_feedback_node)
     builder.add_edge("background_investigator", "planner")
+    # Add routing from coordinator
+    builder.add_conditional_edges(
+        "coordinator",
+        route_from_coordinator,
+        ["report_editor", "planner", "background_investigator", "__end__"],
+    )
     builder.add_conditional_edges(
         "research_team",
         continue_to_running_research_team,
         ["planner", "researcher", "coder"],
     )
-    builder.add_edge("reporter", END)
+    # Add conditional edges for post-report editing
+    builder.add_conditional_edges(
+        "reporter", continue_to_editing_or_end, ["report_editor", END]
+    )
+    builder.add_conditional_edges(
+        "report_editor", continue_to_editing_or_end, ["report_editor", END]
+    )
     return builder
 
 

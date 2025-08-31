@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from src.db.neo4j_client import Neo4jClient
 from src.kg.models import (
     AgentWorkingGraph,
     ConceptNode,
@@ -16,7 +17,6 @@ from src.kg.models import (
     Relationship,
     RelationshipType,
 )
-from src.db.neo4j_client import Neo4jClient
 
 # Type alias for concept data
 ConceptData = Dict[str, Union[str, float, List[str], Dict[str, float]]]
@@ -848,9 +848,7 @@ class PKGInterface:
         MATCH path = (n:Concept)-[*0..{depth}]-(related:Concept)
         WHERE n.id IN $node_ids
         RETURN path
-        """.format(
-            depth=depth
-        )
+        """.format(depth=depth)
 
         try:
             with self.neo4j_client.driver.session() as session:

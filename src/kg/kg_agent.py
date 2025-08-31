@@ -3,19 +3,16 @@
 This module implements the KG agent components as specified in Knowledge_Graph_Agent.md.
 """
 
-import os
 import asyncio
+import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from dotenv import load_dotenv
+
 from src.config import Configuration
 from src.kg.graph import concept_research_graph, infer_relationship_graph
-from src.kg.state import (
-    ConceptResearchState,
-    InferRelationshipsState,
-    InferRelationshipState,
-)
 from src.kg.models import (
     AgentWorkingGraph,
     ConceptNode,
@@ -24,8 +21,12 @@ from src.kg.models import (
     RelationshipType,
 )
 from src.kg.pkg_interface import PKGInterface
+from src.kg.state import (
+    ConceptResearchState,
+    InferRelationshipsState,
+    InferRelationshipState,
+)
 from src.llms.llm import generate_embedding
-from dotenv import load_dotenv
 
 load_dotenv()
 DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai")
@@ -103,7 +104,6 @@ def identify_goal_and_initial_awg(
     session_log.log("INFO", f"Starting goal identification for: {uqc.goal_string}")
 
     try:
-
         # Step 1: Use vector search to find existing goal node
         identified_goal = None
         session_log.log("INFO", f"Search goal in PKG: {uqc.goal_string}")
