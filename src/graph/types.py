@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 
-from langgraph.graph import MessagesState
 from typing import Union
+
+from langgraph.graph import MessagesState
 
 from src.prompts.planner_model import Plan
 from src.rag import Resource
-from .schemas import ReportOutput, EducationalReportOutput
+
+from .schemas import EducationalReportOutput, ReportOutput
 
 
 class State(MessagesState):

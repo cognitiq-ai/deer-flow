@@ -8,11 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import RunnableConfig, Send
 from pydantic import ValidationError
 
-from src.kg.schemas import (
-    ConceptDefinitionOutput,
-    ConceptPrerequisiteOutput,
-    InferredRelationship,
-)
+from src.config.configuration import Configuration
 from src.kg.models import (
     Relationship,
     RelationshipType,
@@ -20,20 +16,11 @@ from src.kg.models import (
     ResearchQA,
     ResearchSource,
 )
-from src.llms.llm import get_llm_by_type
-from src.tools.search import get_web_search_tool
-
-from ..prompts.kg.prompts import (
-    concept_definition_instructions,
-    definition_query_writer_instructions,
-    definition_reflection_instructions,
-    infer_relationships_instructions,
-    prerequisite_identification_instructions,
-    prerequisites_query_writer_instructions,
-    prerequisites_reflection_instructions,
-)
 from src.kg.schemas import (
+    ConceptDefinitionOutput,
+    ConceptPrerequisiteOutput,
     DefinitionResearchReflection,
+    InferredRelationship,
     PrerequisiteResearchReflection,
     SearchQueryList,
 )
@@ -50,7 +37,18 @@ from src.kg.utils import (
     tika_extractor,
     update_messages,
 )
-from src.config.configuration import Configuration
+from src.llms.llm import get_llm_by_type
+from src.tools.search import get_web_search_tool
+
+from ..prompts.kg.prompts import (
+    concept_definition_instructions,
+    definition_query_writer_instructions,
+    definition_reflection_instructions,
+    infer_relationships_instructions,
+    prerequisite_identification_instructions,
+    prerequisites_query_writer_instructions,
+    prerequisites_reflection_instructions,
+)
 
 
 # Node implementations

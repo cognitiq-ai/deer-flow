@@ -4,6 +4,7 @@
 """Structured output schemas for the graph nodes."""
 
 from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 

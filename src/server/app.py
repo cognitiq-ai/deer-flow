@@ -17,12 +17,12 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 from psycopg_pool import AsyncConnectionPool
 
-from src.config.configuration import get_recursion_limit
-from src.config.loader import get_bool_env, get_str_env
+from src.config.configuration import get_bool_env, get_recursion_limit, get_str_env
 from src.config.report_style import ReportStyle
 from src.config.tools import SELECTED_RAG_PROVIDER
 from src.graph.builder import build_graph_with_memory
 from src.graph.checkpoint import chat_stream_message
+from src.kg.kg_agent import session_orchestrator_and_main_loop
 from src.llms.llm import get_configured_llm_models
 from src.podcast.graph.builder import build_graph as build_podcast_graph
 from src.ppt.graph.builder import build_graph as build_ppt_graph
@@ -31,8 +31,6 @@ from src.prose.graph.builder import build_graph as build_prose_graph
 from src.rag.builder import build_retriever
 from src.rag.milvus import load_examples
 from src.rag.retriever import Resource
-from src.server.kg_request import KGSessionRequest
-from src.kg.kg_agent import session_orchestrator_and_main_loop
 from src.server.chat_request import (
     ChatRequest,
     EnhancePromptRequest,
@@ -42,6 +40,7 @@ from src.server.chat_request import (
     TTSRequest,
 )
 from src.server.config_request import ConfigResponse
+from src.server.kg_request import KGSessionRequest
 from src.server.mcp_request import MCPServerMetadataRequest, MCPServerMetadataResponse
 from src.server.mcp_utils import load_mcp_tools
 from src.server.rag_request import (
@@ -299,10 +298,6 @@ async def _astream_workflow_generator(
     # Prepare workflow input
     workflow_input = {
         "messages": messages,
-        "plan_iterations": 0,
-        "final_report": "",
-        "current_plan": None,
-        "observations": [],
         "auto_accepted_plan": auto_accepted_plan,
         "enable_background_investigation": enable_background_investigation,
         "research_topic": messages[-1]["content"] if messages else "",
