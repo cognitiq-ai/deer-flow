@@ -22,8 +22,8 @@ from src.config.report_style import ReportStyle
 from src.config.tools import SELECTED_RAG_PROVIDER
 from src.graph.builder import build_graph_with_memory
 from src.graph.checkpoint import chat_stream_message
-from src.kg.kg_agent import session_orchestrator_and_main_loop
 from src.llms.llm import get_configured_llm_models
+from src.orchestrator.session import session_orchestrator
 from src.podcast.graph.builder import build_graph as build_podcast_graph
 from src.ppt.graph.builder import build_graph as build_ppt_graph
 from src.prompt_enhancer.graph.builder import build_graph as build_prompt_enhancer_graph
@@ -544,7 +544,7 @@ async def enhance_prompt(request: EnhancePromptRequest):
 @app.post("/api/kg/session")
 async def run_kg_session(request: KGSessionRequest):
     try:
-        summary = await session_orchestrator_and_main_loop(request.model_dump())
+        summary = await session_orchestrator(request.model_dump())
         return summary
     except Exception as e:
         logger.exception(f"Error occurred during KG session: {str(e)}")
