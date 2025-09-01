@@ -1,4 +1,5 @@
 import asyncio
+import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,7 +21,8 @@ from src.kg.state import (
 )
 from src.llms.llm import generate_embedding
 from src.orchestrator.models import SessionLog, UserQueryContext
-from src.orchestrator.session import DEFAULT_EMBEDDING_PROVIDER
+
+DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai")
 
 
 def identify_goal(

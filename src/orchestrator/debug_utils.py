@@ -34,7 +34,7 @@ except ImportError:
     TextColumn = None
     Table = None
 
-from src.kg.models import AgentWorkingGraph, ConceptNode
+from src.kg.models import AgentWorkingGraph
 from src.orchestrator.models import SessionLog, UserQueryContext
 
 

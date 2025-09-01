@@ -23,7 +23,6 @@ from src.orchestrator.kg import (
 from src.orchestrator.models import SessionLog, UserQueryContext
 
 load_dotenv()
-DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai")
 
 
 async def session_orchestrator(
