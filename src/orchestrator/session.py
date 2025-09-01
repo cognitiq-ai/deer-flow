@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from src.config import Configuration
 from src.kg.pkg_interface import PKGInterface
 from src.orchestrator.content import content_generator
+from src.orchestrator.debug_utils import EnhancedSessionLogger
 from src.orchestrator.kg import (
     awg_consolidator,
     criteria_check,
@@ -27,6 +28,7 @@ DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai")
 
 async def session_orchestrator(
     user_query_context_data: Dict[str, Any],
+    session_logger: Optional[EnhancedSessionLogger] = None,
 ) -> Dict[str, Any]:
     """
     KG1: Session_Orchestrator_And_Main_Loop
@@ -40,8 +42,12 @@ async def session_orchestrator(
     Returns:
         Tuple of (final_session_outcome, session_summary)
     """
-    # Initialize session
-    session_log_global = SessionLog()
+    # Initialize session logger (enhanced or default)
+    if session_logger is None:
+        session_log_global = SessionLog()
+    else:
+        session_log_global = session_logger
+
     session_log_global.log(
         "INFO", "KG1: Starting Session Orchestrator", user_query_context_data
     )
@@ -52,6 +58,10 @@ async def session_orchestrator(
     try:
         # Reconstruct UserQueryContext
         uqc = UserQueryContext(**user_query_context_data)
+
+        # Trigger session start callback
+        if hasattr(session_log_global, "log_session_start"):
+            session_log_global.log_session_start(uqc)
 
         # Get configuration
         pkg_interface = PKGInterface()
@@ -105,6 +115,12 @@ async def session_orchestrator(
                 },
             )
 
+            # Trigger iteration start callback
+            if hasattr(session_log_global, "log_iteration_start"):
+                session_log_global.log_iteration_start(
+                    iteration_main_current, focus_concepts_next_iteration
+                )
+
             # Execute Parallel Inner Loops (KG3)
             current_iteration_inner_loop_results = []
 
@@ -126,6 +142,10 @@ async def session_orchestrator(
                     # Create tasks for parallel execution using Celery
                     batch_tasks = []
                     for concept in batch:
+                        # Trigger inner loop start callback
+                        if hasattr(session_log_global, "log_inner_loop_start"):
+                            session_log_global.log_inner_loop_start(concept.name)
+
                         task_data = {
                             "concept_focus_data": concept.model_dump(),
                             "goal_context_data": gn_user_session.model_dump(),
@@ -140,15 +160,21 @@ async def session_orchestrator(
                             awg_context_data=task_data["awg_context_data"],
                             session_log_data=task_data["session_log_data"],
                         )
-                        batch_tasks.append(task)
+                        batch_tasks.append((task, concept.name))
 
                     # Wait for all tasks in this batch to complete
                     batch_results = []
-                    for task in batch_tasks:
+                    for task, concept_name in batch_tasks:
                         try:
                             # Wait for task completion with timeout
                             result = task.get(timeout=300)  # 5 minute timeout per task
                             batch_results.append(result)
+
+                            # Trigger inner loop complete callback (success)
+                            if hasattr(session_log_global, "log_inner_loop_complete"):
+                                session_log_global.log_inner_loop_complete(
+                                    concept_name, True
+                                )
                         except Exception as e:
                             session_log_global.log(
                                 "ERROR",
@@ -157,6 +183,12 @@ async def session_orchestrator(
                             )
                             # Add empty result for failed task
                             batch_results.append(({}, False))
+
+                            # Trigger inner loop complete callback (failure)
+                            if hasattr(session_log_global, "log_inner_loop_complete"):
+                                session_log_global.log_inner_loop_complete(
+                                    concept_name, False
+                                )
 
                     # Collect results from this batch
                     current_iteration_inner_loop_results.extend(batch_results)
@@ -197,6 +229,12 @@ async def session_orchestrator(
                         "awg_relationships": len(awg_session.relationships),
                     },
                 )
+
+                # Trigger AWG update callback
+                if hasattr(session_log_global, "log_awg_update"):
+                    session_log_global.log_awg_update(
+                        awg_session, iteration_main_current
+                    )
 
             except Exception as e:
                 session_log_global.log("ERROR", f"KG1: Error in AWG update: {e}")
@@ -282,6 +320,10 @@ async def session_orchestrator(
                 },  # Log first 5
             )
 
+            # Trigger educational content start callback
+            if hasattr(session_log_global, "log_educational_content_start"):
+                session_log_global.log_educational_content_start(len(ordered_nodes))
+
             try:
                 # Process concepts in batches for educational content generation
                 max_parallel = min(config.max_parallel_inner_loops, len(ordered_nodes))
@@ -331,13 +373,33 @@ async def session_orchestrator(
 
                     # Wait for all tasks in this batch to complete
                     batch_results = []
-                    for task in batch_tasks:
+                    for j, task in enumerate(batch_tasks):
+                        concept_node = awg_session.get_node(batch_node_ids[j])
+                        if not concept_node:
+                            session_log_global.log(
+                                "WARNING", f"Node {batch_node_ids[j]} not found in AWG"
+                            )
+                            continue
+
                         try:
                             # Wait for task completion with configurable timeout
                             result = task.get(
                                 timeout=config.educational_content_timeout
                             )
                             batch_results.append(result)
+
+                            # Trigger educational content progress callback (success)
+                            success = (
+                                result.get("success", False)
+                                if isinstance(result, dict)
+                                else True
+                            )
+                            if hasattr(
+                                session_log_global, "log_educational_content_progress"
+                            ):
+                                session_log_global.log_educational_content_progress(
+                                    concept_node.name, success
+                                )
                         except Exception as e:
                             session_log_global.log(
                                 "ERROR",
@@ -346,6 +408,14 @@ async def session_orchestrator(
                             )
                             # Add failed result for tracking
                             batch_results.append({"success": False, "error": str(e)})
+
+                            # Trigger educational content progress callback (failure)
+                            if hasattr(
+                                session_log_global, "log_educational_content_progress"
+                            ):
+                                session_log_global.log_educational_content_progress(
+                                    concept_node.name, False
+                                )
 
                     # Collect results from this batch
                     educational_content_results.extend(batch_results)
@@ -405,30 +475,46 @@ async def session_orchestrator(
             "INFO", "KG1: Session orchestrator completed successfully"
         )
 
+        # Trigger session complete callback
+        if hasattr(session_log_global, "log_session_complete"):
+            session_log_global.log_session_complete(
+                overall_session_status, session_summary
+            )
+
         return session_summary
 
     except Exception as e:
         session_log_global.log(
             "ERROR", f"KG1: Critical error in session orchestrator: {e}"
         )
-        return _generate_session_summary(
-            session_log_global, {"overall_status": overall_session_status}
+        error_summary = _generate_session_summary(
+            session_log_global, {"overall_status": "FAILURE_CRITICAL_ERROR"}
         )
+
+        # Trigger session complete callback for error case
+        if hasattr(session_log_global, "log_session_complete"):
+            session_log_global.log_session_complete(
+                "FAILURE_CRITICAL_ERROR", error_summary
+            )
+
+        return error_summary
 
 
 def session_orchestrator_celery_task(
     user_query_context_data: Dict[str, Any],
+    session_logger: Optional[EnhancedSessionLogger] = None,
 ) -> Dict[str, Any]:
     """
     Celery task wrapper for session_orchestrator_and_main_loop.
 
     Args:
         user_query_context_data: Serialized UserQueryContext data
+        session_logger: Optional enhanced session logger for debug capabilities
 
     Returns:
         Dictionary containing session summary
     """
-    return asyncio.run(session_orchestrator(user_query_context_data))
+    return asyncio.run(session_orchestrator(user_query_context_data, session_logger))
 
 
 def _generate_session_summary(
