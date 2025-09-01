@@ -3,6 +3,7 @@
 
 from dotenv import load_dotenv
 
+from .configuration import Configuration
 from .loader import load_yaml_config
 from .questions import BUILT_IN_QUESTIONS, BUILT_IN_QUESTIONS_ZH_CN
 from .tools import SELECTED_SEARCH_ENGINE, SearchEngine
@@ -39,6 +40,8 @@ TEAM_MEMBER_CONFIGURATIONS = {
 TEAM_MEMBERS = list(TEAM_MEMBER_CONFIGURATIONS.keys())
 
 __all__ = [
+    # Configuration
+    "Configuration",
     # Other configurations
     "TEAM_MEMBERS",
     "TEAM_MEMBER_CONFIGURATIONS",
@@ -46,5 +49,5 @@ __all__ = [
     "SearchEngine",
     "BUILT_IN_QUESTIONS",
     "BUILT_IN_QUESTIONS_ZH_CN",
-    load_yaml_config,
+    "load_yaml_config",
 ]

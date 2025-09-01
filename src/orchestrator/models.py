@@ -1,37 +1,40 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
 
-class UserQueryContext:
+
+class UserQueryContext(BaseModel):
     """Represents the user's input context for KG agent processing."""
 
-    def __init__(
-        self,
-        goal_string: str,
-        raw_topic_string: Optional[str] = None,
-        prior_knowledge_level: Optional[str] = None,
-        preferences: Optional[Dict[str, Any]] = None,
-    ):
-        """Initialize UserQueryContext.
+    goal_string: str = Field(..., description="The user's learning goal")
+    raw_topic_string: Optional[str] = Field(
+        None, description="Optional raw topic string"
+    )
+    prior_knowledge_level: Optional[str] = Field(
+        None, description="Optional prior knowledge level"
+    )
+    preferences: Dict[str, Any] = Field(
+        default_factory=dict, description="Optional user preferences"
+    )
 
-        Args:
-            goal_string: The user's goal string
-            raw_topic_string: Optional raw topic string
-            prior_knowledge_level: Optional prior knowledge level
-            preferences: Optional user preferences
-        """
-        self.goal_string = goal_string
-        self.raw_topic_string = raw_topic_string
-        self.prior_knowledge_level = prior_knowledge_level
-        self.preferences = preferences or {}
+    class Config:
+        """Pydantic configuration."""
+
+        extra = "allow"  # Allow extra fields for future compatibility
 
 
-class SessionLog:
+class SessionLog(BaseModel):
     """Accumulates logs of actions, decisions, errors for the KG agent session."""
 
-    def __init__(self):
-        """Initialize SessionLog."""
-        self.logs: List[Dict[str, Any]] = []
+    logs: List[Dict[str, Any]] = Field(
+        default_factory=list, description="List of log entries"
+    )
+
+    class Config:
+        """Pydantic configuration."""
+
+        extra = "allow"  # Allow extra fields for future compatibility
 
     def log(
         self, level: str, message: str, data: Optional[Dict[str, Any]] = None
