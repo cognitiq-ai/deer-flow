@@ -54,6 +54,7 @@ dependencies = [
 dev = [
     "ruff",
     "langgraph-cli[inmem]>=0.2.10",
+    "rich>=14.1.0",
 ]
 test = [
     "pytest>=7.4.0",
