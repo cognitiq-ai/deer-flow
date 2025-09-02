@@ -394,6 +394,30 @@ class AgentWorkingGraph(BaseModel):
         if relationship_id in self.relationships:
             del self.relationships[relationship_id]
 
+    def distance_to_goal(self) -> Dict[Any, int]:
+        """Longest path distance (number of edges) from node -> goal.
+        Nodes that cannot reach goal get -inf.
+        """
+        G = self.to_networkx_graph().to_undirected()
+        goal = [node for node in self.nodes.values() if node.node_type == "goal"][0].id
+        # initialize distances
+        neg_inf = -(10**9)
+        dist = {n: neg_inf for n in G.nodes()}
+        if goal not in G:
+            raise KeyError("goal node not in graph")
+        dist[goal] = 0
+        # process nodes in reverse topological order so successors are processed first
+        topo = list(nx.topological_sort(G))
+        for u in reversed(topo):
+            # for every successor v of u (path u -> v -> ... -> goal)
+            best = neg_inf
+            for v in G.successors(u):
+                if dist[v] > neg_inf:
+                    best = max(best, 1 + dist[v])
+            if best > neg_inf:
+                dist[u] = best
+        return dist
+
     def get_subgraph(self, rel_type: RelationshipType) -> "AgentWorkingGraph":
         """Get the subgraph of the working graph for a given relationship type."""
         # All relationships of type `rel_type`
@@ -970,13 +994,62 @@ class AgentWorkingGraph(BaseModel):
 
         return removed_rel_ids
 
-    def topological_order(self) -> List[str]:
+    def dfs_postorder(self, tie_break_key=lambda x: str(x)) -> List[str]:
         """
-        Generates a topological ordering of the nodes
+        Return a postorder-like ordering that:
+        - is a DFS-postorder on the reversed graph (children before parent),
+        - starts from `goal` (a sink in original G) and explores outward,
+        - iterates neighbors furthest-from-goal first (so whole families are explored
+            and emitted contiguously in postorder whenever possible).
         """
         self.resolve_cycles(combine=True)
-        ordered = list(nx.topological_sort(self.to_networkx_graph(combine=True)))
-        return ordered
+        G = self.to_networkx_graph()
+        goal = [node for node in self.nodes.values() if node.node_type == "goal"][0].id
+        if not nx.is_directed_acyclic_graph(G):
+            raise ValueError("Input must be a DAG")
+
+        NEG_INF = -(10**9)
+
+        def longest_distance(G, node):
+            d = {n: NEG_INF for n in G}
+            d[node] = 0
+            for u in reversed(list(nx.topological_sort(G))):
+                d[u] = max(
+                    [1 + d[v] for v in G.successors(u) if d[v] > NEG_INF] or [d[u]]
+                )
+            return d
+
+        dist = longest_distance(G, goal)
+        R = G.reverse(copy=True)  # edges: parent -> child
+        visited = set()
+        post: List[Any] = []
+
+        def neigh_key(n):
+            # sort by descending dist, tie-break deterministically
+            # nodes that cannot reach goal get smallest priority
+            d = dist.get(n, NEG_INF)
+            return (-d, tie_break_key(n))
+
+        def dfs(u):
+            visited.add(u)
+            # iterate children (in reversed graph) farthest-first
+            for v in sorted(R.successors(u), key=neigh_key):
+                if v not in visited:
+                    dfs(v)
+            post.append(u)
+
+        # 1) start from goal (explore its entire reachable component)
+        if goal in R and goal not in visited:
+            dfs(goal)
+
+        # 2) process remaining nodes that can reach goal but were not visited
+        remaining = [n for n in G.nodes() if n not in visited]
+        remaining.sort(key=lambda x: (-(dist.get(x, NEG_INF)), tie_break_key(x)))
+        for n in remaining:
+            if n not in visited:
+                dfs(n)
+
+        return list(map(lambda x: self.get_node(x).name, post))
 
     def get_definitions(self) -> Dict[str, str]:
         """

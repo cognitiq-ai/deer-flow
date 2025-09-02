@@ -288,7 +288,7 @@ async def session_orchestrator(
 
         ordered_nodes = []
         if order_nodes:
-            ordered_nodes = awg_session.topological_order()
+            ordered_nodes = awg_session.dfs_postorder()
 
         session_log_global.log(
             "INFO",
