@@ -13,18 +13,6 @@ from src.config.configuration import Configuration
 from src.llms.llm import get_embedding_model
 
 
-class RelationshipType(str, Enum):
-    """Defines the types of relationships in the Neo4j graph."""
-
-    HAS_PREREQUISITE = "HAS_PREREQUISITE"
-    PART_OF_GOAL = "PART_OF_GOAL"
-    IS_DUPLICATE_OF = "IS_DUPLICATE_OF"
-    IS_A = "IS_A"  # For concept hierarchy, e.g., "Python IS_A ProgrammingLanguage"
-    PART_OF = "PART_OF"  # For mereology, e.g., "Loop PART_OF ControlFlow"
-    RELATED_TO = "RELATED_TO"  # Generic relationship
-    # Add other relationship types as needed
-
-
 class Neo4jSchema:
     """Neo4j database schema management."""
 

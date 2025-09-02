@@ -35,6 +35,8 @@ NEO4J_PASSWORD=your_password
 LANGGRAPH_CHECKPOINT_DB_URL=postgresql://user:pass@localhost:5432/kg_db
 ```
 
+> **Important**: After setting up the database servers, you **must** run the initialization scripts to create the required schemas, tables, and indexes. See the [Installation & Setup](#installation--setup) section for details.
+
 #### 2. **Celery Task Queue**
 ```bash
 # Install Redis or RabbitMQ as message broker
@@ -86,13 +88,28 @@ LANGSMITH_PROJECT=kg_agent_project
    pg_ctl start
    ```
 
-3. **Start Celery Workers** (Required for parallel processing):
+3. **Initialize Databases** (Required - Run once after infrastructure setup):
+   ```bash
+   # Initialize Neo4j database (creates schema, constraints, indexes)
+   python src/db/init_pkg.py
+   
+   # Initialize PostgreSQL database (creates database, extensions, tables)
+   python src/db/init_postgres.py
+   ```
+   
+   Both scripts will:
+   - ✅ Verify environment variables and connections
+   - 🔧 Create required schemas, constraints, and indexes
+   - 📊 Display setup summary and verification results
+   - ❌ Exit with clear error messages if setup fails
+
+4. **Start Celery Workers** (Required for parallel processing):
    ```bash
    # In separate terminal
    celery -A src.orchestrator.session worker --loglevel=info
    ```
 
-4. **Run the Agent**:
+5. **Run the Agent**:
    ```bash
    # Interactive mode
    python demo.py --interactive
@@ -374,6 +391,14 @@ print(f"Content generation enabled: {config.enable_educational_content_generatio
 
 **Q: What infrastructure do I need to run this?**
 A: You need a distributed setup: Neo4j database, PostgreSQL database, Redis/RabbitMQ message broker, and Celery workers. This is not a simple standalone application.
+
+**Q: Do I need to run database initialization scripts?**
+A: Yes! After starting your Neo4j and PostgreSQL servers, you **must** run:
+```bash
+python src/db/init_pkg.py      # Neo4j initialization
+python src/db/init_postgres.py # PostgreSQL initialization
+```
+These scripts create the required schemas, tables, indexes, and extensions. Without them, the application will fail to start.
 
 **Q: Why do I need Celery workers?**
 A: The system processes multiple concepts in parallel using Celery for distributed task execution. Without workers, the session will hang waiting for task completion.

@@ -53,30 +53,20 @@ class Configuration:
     enable_deep_thinking: bool = False  # Whether to enable deep thinking
 
     # Knowledge Graph
-    reflection_confidence_threshold = 0.8  # Minimum reflection confidence threshold
+    reflection_confidence = 0.8  # Minimum reflection confidence threshold
     max_search_queries = 2  # Maximum search queries per iteration
     max_extract_urls = 2  # Maximum URLs to extract per iteration
-    min_confidence_threshold = (
-        0.7  # Minimum confidence threshold for concept definition
-    )
+    min_confidence = 0.7  # Minimum confidence threshold for concept research
     max_iteration_main = 5  # Maximum number of main iterations
-    max_focus_concepts_per_iteration = (
-        5  # Maximum number of focus concepts per iteration
-    )
+    max_focus_concepts = 5  # Maximum number of focus concepts per iter
     max_parallel_inner_loops = 5  # Maximum number of parallel inner loops
-    max_definition_research_loops = 100  # Maximum number of definition research loops
+    max_research_depth = 100  # Maximum number of research depth
 
     # Educational Content Generation
-    enable_educational_content_generation = (
-        True  # Whether to generate educational content after KG construction
-    )
-    educational_content_timeout = (
-        600  # Timeout for educational content generation per concept (seconds)
-    )
-    educational_content_max_plan_iterations = (
-        2  # Max plan iterations for educational content deer-flow
-    )
-    educational_content_max_step_num = 5  # Max steps for educational content deer-flow
+    enable_content = True  # Whether to generate content after KG
+    content_timeout = 600  # Timeout content generation per concept (seconds)
+    content_max_plan_iterations = 2  # Max plan iterations for content
+    content_max_step_num = 5  # Max steps for content generation
 
     @classmethod
     def from_runnable_config(

@@ -1,6 +1,8 @@
 {
   "dockerfile_lines": [],
   "graphs": {
+    "concept_research": "./src/kg/graph.py:concept_research_graph",
+    "infer_relationships": "./src/kg/graph.py:infer_relationship_graph",
     "deep_research": "./src/workflow.py:graph",
     "podcast_generation": "./src/podcast/graph/builder.py:workflow",
     "ppt_generation": "./src/ppt/graph/builder.py:workflow"

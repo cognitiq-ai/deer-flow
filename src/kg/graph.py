@@ -391,7 +391,7 @@ def route_after_reflection(
         state.reflection,
         current_iteration,
         state.max_iterations,
-        configurable.reflection_confidence_threshold,
+        configurable.reflection_confidence,
     )
     # Enable raw content extraction if required
     extract_content = (

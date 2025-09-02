@@ -6,7 +6,7 @@ including configuration, connection management, and schema initialization.
 
 import os
 import sys
-from typing import Optional, Type
+from typing import List, Optional, Type
 
 import psycopg
 from psycopg.rows import dict_row
@@ -92,11 +92,11 @@ class PostgresClient:
             self._connection.close()
             self._connection = None
 
-    def init_schema(self) -> bool:
+    def init_schema(self) -> List[str]:
         """Initialize PostgreSQL database schema.
 
         Returns:
-            True if schema initialization was successful, False otherwise.
+            List of missing components. Empty list if all components were created successfully.
 
         Raises:
             PostgresConnectionError: If schema initialization fails.
@@ -168,13 +168,13 @@ def init_schema_cli() -> None:
     """Command-line interface for initializing PostgreSQL database schema."""
     try:
         with PostgresClient() as client:
-            success = client.init_schema()
-            if success:
+            missing_components = client.init_schema()
+            if not missing_components:
                 print("PostgreSQL schema setup completed successfully!")
             else:
-                print(
-                    "Warning: Some schema components may be missing or failed to create."
-                )
+                print("Warning: Some schema components are missing:")
+                for component in missing_components:
+                    print(f"  - {component}")
     except Exception as e:
         print(f"Error initializing PostgreSQL schema: {str(e)}")
         sys.exit(1)
