@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import Configuration
+from src.db.pkg_interface import PKGInterface
 from src.kg.graph import concept_research_graph, infer_relationship_graph
 from src.kg.models import (
     AgentWorkingGraph,
@@ -13,7 +14,6 @@ from src.kg.models import (
     Relationship,
     RelationshipType,
 )
-from src.kg.pkg_interface import PKGInterface
 from src.kg.state import (
     ConceptResearchState,
     InferRelationshipsState,
@@ -787,7 +787,7 @@ def criteria_check(
             return "STOP_GOAL_UNRESOLVABLE", []
 
         # Check if goal node itself needs definition/validation
-        min_confidence_threshold = config.min_confidence_threshold
+        min_confidence_threshold = config.min_confidence
 
         if (
             goal_node_in_awg.status == ConceptNodeStatus.STUB
@@ -901,7 +901,7 @@ def criteria_check(
                 return (is_goal, has_some_definition, confidence_score, age_score)
 
             # Sort by priority (highest first) and limit to max batch size
-            max_focus_concepts = config.max_focus_concepts_per_iteration
+            max_focus_concepts = config.max_focus_concepts
             sorted_candidates = sorted(
                 all_focus_candidates, key=priority_score, reverse=True
             )

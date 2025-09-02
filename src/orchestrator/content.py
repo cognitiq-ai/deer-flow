@@ -164,8 +164,8 @@ async def _generate_content(
         workflow_config = {
             "configurable": {
                 "thread_id": thread_id,
-                "max_plan_iterations": config.educational_content_max_plan_iterations,
-                "max_step_num": config.educational_content_max_step_num,
+                "max_plan_iterations": config.content_max_plan_iterations,
+                "max_step_num": config.content_max_step_num,
                 "max_search_results": config.max_search_results,
                 "mcp_settings": {},
                 "report_style": ReportStyle.EDUCATIONAL.value,

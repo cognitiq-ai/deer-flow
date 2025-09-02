@@ -22,6 +22,22 @@ class PostgresSchema:
         self.connection = connection
         self.logger = logging.getLogger(__name__)
 
+    def create_extensions(self) -> None:
+        """Create necessary PostgreSQL extensions."""
+        extensions = [
+            "uuid-ossp",  # For UUID generation in educational_reports
+            "pg_trgm",  # For text similarity searches (optional but useful)
+        ]
+
+        try:
+            with self.connection.cursor() as cursor:
+                for extension in extensions:
+                    cursor.execute(f'CREATE EXTENSION IF NOT EXISTS "{extension}";')
+                self.logger.info("PostgreSQL extensions created/verified successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to create extensions: {e}")
+            raise
+
     def create_educational_reports_table(self) -> None:
         """Create the educational_reports table if it doesn't exist."""
         create_table_sql = """
@@ -73,62 +89,82 @@ class PostgresSchema:
 
     def setup_schema(self) -> None:
         """Set up complete database schema."""
+        self.create_extensions()
         self.create_educational_reports_table()
         self.create_educational_reports_indexes()
 
-    def verify_schema(self) -> bool:
-        """Verify schema setup and return whether all components exist.
+    def verify_schema(self) -> List[str]:
+        """Verify schema setup and return list of missing components.
 
         Returns:
-            True if all schema components exist, False otherwise.
+            List of missing component names. Empty list if all components exist.
         """
-        try:
-            # Check if educational_reports table exists
-            table_check_sql = """
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'educational_reports'
-            );
-            """
+        missing_components = []
 
+        try:
             with self.connection.cursor() as cursor:
+                # Check if required extensions exist
+                extension_check_sql = """
+                SELECT extname FROM pg_extension 
+                WHERE extname IN ('uuid-ossp', 'pg_trgm');
+                """
+                cursor.execute(extension_check_sql)
+                existing_extensions = {row["extname"] for row in cursor.fetchall()}
+
+                expected_extensions = {"uuid-ossp", "pg_trgm"}
+                missing_extensions = expected_extensions - existing_extensions
+                if missing_extensions:
+                    missing_components.extend(
+                        [f"extension:{ext}" for ext in missing_extensions]
+                    )
+
+                # Check if educational_reports table exists
+                table_check_sql = """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'educational_reports'
+                );
+                """
                 cursor.execute(table_check_sql)
                 table_exists = cursor.fetchone()["exists"]
 
                 if not table_exists:
-                    self.logger.warning("educational_reports table does not exist")
-                    return False
+                    missing_components.append("table:educational_reports")
+                else:
+                    # Check if required indexes exist
+                    index_check_sql = """
+                    SELECT indexname FROM pg_indexes 
+                    WHERE tablename = 'educational_reports'
+                    AND schemaname = 'public';
+                    """
+                    cursor.execute(index_check_sql)
+                    existing_indexes = {row["indexname"] for row in cursor.fetchall()}
 
-                # Check if required indexes exist
-                index_check_sql = """
-                SELECT indexname FROM pg_indexes 
-                WHERE tablename = 'educational_reports'
-                AND schemaname = 'public';
-                """
+                    expected_indexes = {
+                        "idx_educational_reports_concept_id",
+                        "idx_educational_reports_goal_id",
+                        "idx_educational_reports_sequence",
+                        "idx_educational_reports_created_at",
+                        "idx_educational_reports_updated_at",
+                    }
 
-                cursor.execute(index_check_sql)
-                existing_indexes = {row["indexname"] for row in cursor.fetchall()}
+                    missing_indexes = expected_indexes - existing_indexes
+                    if missing_indexes:
+                        missing_components.extend(
+                            [f"index:{idx}" for idx in missing_indexes]
+                        )
 
-                expected_indexes = {
-                    "idx_educational_reports_concept_id",
-                    "idx_educational_reports_goal_id",
-                    "idx_educational_reports_sequence",
-                    "idx_educational_reports_created_at",
-                    "idx_educational_reports_updated_at",
-                }
+                if not missing_components:
+                    self.logger.info("All schema components verified successfully")
+                else:
+                    self.logger.warning(f"Missing components: {missing_components}")
 
-                missing_indexes = expected_indexes - existing_indexes
-                if missing_indexes:
-                    self.logger.warning(f"Missing indexes: {missing_indexes}")
-                    return False
-
-                self.logger.info("All schema components verified successfully")
-                return True
+                return missing_components
 
         except Exception as e:
             self.logger.error(f"Error verifying schema: {e}")
-            return False
+            return ["error:verification_failed"]
 
     def get_table_info(self, table_name: str = "educational_reports") -> List[dict]:
         """Get information about a table's structure.

@@ -302,7 +302,10 @@ if __name__ == "__main__":
         for error in errors:
             print(f"  • {error}")
         print("\nThe Knowledge Graph Agent requires distributed infrastructure.")
-        print("See README_KG.md for complete setup instructions.")
+        print("After setting up databases, run the initialization scripts:")
+        print("  python src/db/init_pkg.py      # Neo4j initialization")
+        print("  python src/db/init_postgres.py # PostgreSQL initialization")
+        print("\nSee README_KG.md for complete setup instructions.")
         sys.exit(1)
 
     if warnings:

@@ -11,7 +11,7 @@ from typing import List, Optional, Tuple, Type
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 
-from src.db.schema import Neo4jSchema
+from src.db.neo4j_schema import Neo4jSchema
 
 
 class Neo4jConnectionError(Exception):

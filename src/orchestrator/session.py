@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 from src.config import Configuration
-from src.kg.pkg_interface import PKGInterface
+from src.db.pkg_interface import PKGInterface
 from src.orchestrator.content import content_generator
 from src.orchestrator.debug_utils import EnhancedSessionLogger
 from src.orchestrator.kg import (
@@ -303,11 +303,7 @@ async def session_orchestrator(
 
         # Educational Content Generation Phase
         educational_content_results = []
-        if (
-            order_nodes
-            and ordered_nodes
-            and config.enable_educational_content_generation
-        ):
+        if order_nodes and ordered_nodes and config.enable_content:
             session_log_global.log(
                 "INFO",
                 f"KG1: Starting educational content generation for {len(ordered_nodes)} concepts",
@@ -382,9 +378,7 @@ async def session_orchestrator(
 
                         try:
                             # Wait for task completion with configurable timeout
-                            result = task.get(
-                                timeout=config.educational_content_timeout
-                            )
+                            result = task.get(timeout=config.content_timeout)
                             batch_results.append(result)
 
                             # Trigger educational content progress callback (success)

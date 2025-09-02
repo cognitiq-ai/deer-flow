@@ -234,67 +234,6 @@ async def demo_interactive_mode():
     print()
 
 
-def demo_library_usage():
-    """Demonstrate how to integrate the hybrid approach in your own code."""
-    print("📚 LIBRARY INTEGRATION EXAMPLES")
-    print("=" * 50)
-
-    print("Example 1: Production API Integration")
-    print("```python")
-    print("from src.orchestrator.session import session_orchestrator")
-    print()
-    print("async def process_user_request(user_data):")
-    print("    # Production mode - no debug overhead")
-    print("    result = await session_orchestrator(user_data)")
-    print("    return result")
-    print("```")
-    print()
-
-    print("Example 2: Development/Testing with Debug Output")
-    print("```python")
-    print("from src.orchestrator.session import session_orchestrator_with_debug")
-    print()
-    print("async def test_knowledge_graph_generation():")
-    print("    # Debug mode with rich output")
-    print("    result = await session_orchestrator_with_debug(")
-    print("        user_data,")
-    print("        enable_rich_output=True,")
-    print("        show_interactive=True")
-    print("    )")
-    print("    return result")
-    print("```")
-    print()
-
-    print("Example 3: Synchronous Integration")
-    print("```python")
-    print("from src.orchestrator.session import session_orchestrator_with_debug_sync")
-    print()
-    print("def cli_command(user_data):")
-    print("    # No need for asyncio.run()")
-    print("    result = session_orchestrator_with_debug_sync(")
-    print("        user_data,")
-    print("        enable_rich_output=True")
-    print("    )")
-    print("    return result")
-    print("```")
-    print()
-
-    print("Example 4: Custom Console Configuration")
-    print("```python")
-    print("from rich.console import Console")
-    print("from src.orchestrator.session import session_orchestrator_with_debug")
-    print()
-    print("# Custom console with specific settings")
-    print("console = Console(width=120, force_terminal=True)")
-    print("result = await session_orchestrator_with_debug(")
-    print("    user_data,")
-    print("    enable_rich_output=True,")
-    print("    console=console")
-    print(")")
-    print("```")
-    print()
-
-
 async def main():
     """Main demonstration function."""
     print("🚀 HYBRID SESSION ORCHESTRATOR DEMONSTRATION")
@@ -313,14 +252,10 @@ async def main():
             "For demonstration purposes, we'll show the API examples without running them."
         )
         print()
-        demo_library_usage()
         return
 
     print("✅ Environment configured correctly")
     print()
-
-    # Show library usage examples
-    demo_library_usage()
 
     # Interactive menu
     while True:
