@@ -8,7 +8,7 @@ from typing import Any, Dict, List, get_args
 import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_openai import AzureChatOpenAI, ChatOpenAI, OpenAIEmbeddings
 
 from src.config import load_yaml_config
@@ -17,6 +17,9 @@ from src.llms.providers.dashscope import ChatDashscope
 
 # Cache for LLM instances
 _llm_cache: dict[LLMType, BaseChatModel] = {}
+
+# Cache for embedding instance
+_embedding_cache: OpenAIEmbeddings | GoogleGenerativeAIEmbeddings | None = None
 
 
 def _get_config_file_path() -> str:
@@ -46,6 +49,22 @@ def _get_env_llm_conf(llm_type: str) -> Dict[str, Any]:
         if key.startswith(prefix):
             conf_key = key[len(prefix) :].lower()
             conf[conf_key] = value
+    return conf
+
+
+def _get_env_embedding_conf() -> Dict[str, Any]:
+    """
+    Get embedding configuration from environment variables.
+    Environment variables should follow the format: EMBEDDING_MODEL__{KEY}
+    e.g., EMBEDDING_MODEL__api_key, EMBEDDING_MODEL__base_url
+    """
+    prefix = "EMBEDDING_MODEL__"
+    conf = {}
+    for key, value in os.environ.items():
+        if key.startswith(prefix):
+            conf_key = key[len(prefix) :].lower()
+            conf[conf_key] = value
+
     return conf
 
 
@@ -124,6 +143,52 @@ def _create_llm_use_conf(llm_type: LLMType, conf: Dict[str, Any]) -> BaseChatMod
         return ChatOpenAI(**merged_conf)
 
 
+def _create_embedding_use_conf(
+    conf: Dict[str, Any],
+) -> OpenAIEmbeddings | GoogleGenerativeAIEmbeddings:
+    """Create embedding instance using configuration."""
+    config_key = "EMBEDDING_MODEL"
+    embedding_conf = conf.get(config_key, {})
+    if not isinstance(embedding_conf, dict):
+        raise ValueError(
+            f"Invalid embedding configuration for {config_key}: {embedding_conf}"
+        )
+
+    # Get configuration from environment variables
+    env_conf = _get_env_embedding_conf()
+
+    # Merge configurations, with environment variables taking precedence
+    merged_conf = {**embedding_conf, **env_conf}
+
+    if not merged_conf:
+        raise ValueError(f"No configuration found for {config_key}")
+
+    # Check if it's Google AI Studio platform based on configuration
+    platform = merged_conf.get("platform", "").lower()
+    is_google_aistudio = platform == "google_aistudio" or platform == "google-aistudio"
+
+    if is_google_aistudio:
+        # Handle Google AI Studio specific configuration
+        gemini_conf = merged_conf.copy()
+
+        # Map common keys to Google AI Studio specific keys
+        if "api_key" in gemini_conf:
+            gemini_conf["google_api_key"] = gemini_conf.pop("api_key")
+
+        # Remove base_url and platform since Google AI Studio doesn't use them
+        gemini_conf.pop("base_url", None)
+        gemini_conf.pop("platform", None)
+
+        # Remove unsupported parameters for Google AI Studio
+        gemini_conf.pop("http_client", None)
+        gemini_conf.pop("http_async_client", None)
+
+        return GoogleGenerativeAIEmbeddings(**gemini_conf)
+
+    else:
+        return OpenAIEmbeddings(**merged_conf)
+
+
 def get_llm_by_type(llm_type: LLMType) -> BaseChatModel:
     """
     Get LLM instance by type. Returns cached instance if available.
@@ -135,6 +200,20 @@ def get_llm_by_type(llm_type: LLMType) -> BaseChatModel:
     llm = _create_llm_use_conf(llm_type, conf)
     _llm_cache[llm_type] = llm
     return llm
+
+
+def get_embedding_model() -> OpenAIEmbeddings | GoogleGenerativeAIEmbeddings:
+    """
+    Get embedding instance. Returns cached instance if available.
+    """
+    global _embedding_cache
+    if _embedding_cache is not None:
+        return _embedding_cache
+
+    conf = load_yaml_config(_get_config_file_path())
+    embedding = _create_embedding_use_conf(conf)
+    _embedding_cache = embedding
+    return embedding
 
 
 def get_configured_llm_models() -> dict[str, list[str]]:
@@ -174,85 +253,68 @@ def get_configured_llm_models() -> dict[str, list[str]]:
         return {}
 
 
+def get_configured_embedding_models() -> dict[str, list[str]]:
+    """
+    Get configured embedding model.
+
+    Returns:
+        Dictionary with embedding configuration if available.
+    """
+    try:
+        conf = load_yaml_config(_get_config_file_path())
+        config_key = "EMBEDDING_MODEL"
+
+        # Get configuration from YAML file
+        yaml_conf = conf.get(config_key, {})
+
+        # Get configuration from environment variables
+        env_conf = _get_env_embedding_conf()
+
+        # Merge configurations, with environment variables taking precedence
+        merged_conf = {**yaml_conf, **env_conf}
+
+        configured_models: dict[str, list[str]] = {}
+
+        # Check if model is configured
+        model_name = merged_conf.get("model")
+        if model_name:
+            configured_models["embedding"] = [model_name]
+
+        return configured_models
+
+    except Exception as e:
+        # Log error and return empty dict to avoid breaking the application
+        print(f"Warning: Failed to load embedding configuration: {e}")
+        return {}
+
+
 # In the future, we will use reasoning_llm and vl_llm for different purposes
 # reasoning_llm = get_llm_by_type("reasoning")
 # vl_llm = get_llm_by_type("vision")
 
 
-def get_embedding_model(
-    provider: str = "openai",
-) -> OpenAIEmbeddings | GoogleGenerativeAIEmbeddings:
-    """
-    Get a LangChain embedding model based on the specified provider.
-
-    Args:
-        provider: The embedding provider to use ("openai" or "anthropic")
-
-    Returns:
-        A configured LangChain embedding model
-
-    Raises:
-        EmbeddingClientError: If the specified provider is not available
-    """
-    conf = load_yaml_config(_get_config_file_path())
-    config_key = "EMBEDDING_MODEL"
-    embedding_conf = conf.get(config_key, {})
-    if not isinstance(embedding_conf, dict):
-        raise ValueError(f"Invalid configuration for {config_key}: {embedding_conf}")
-
-    # Get configuration from environment variables
-    env_conf = _get_env_llm_conf("embedding")
-
-    # Merge configurations, with environment variables taking precedence
-    conf = {**embedding_conf, **env_conf}
-
-    if not conf:
-        raise ValueError(f"No configuration found for {config_key}")
-
-    # For better testability, check if the settings exist first
-    openai_available = bool(conf.get("OPENAI_API_KEY", ""))
-    gemini_available = bool(conf.get("GEMINI_API_KEY", ""))
-
-    # Try preferred provider first
-    if provider == "openai" and openai_available:
-        return OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            api_key=conf.get("OPENAI_API_KEY", ""),
-        )
-    elif provider == "gemini" and gemini_available:
-        return GoogleGenerativeAIEmbeddings(
-            model="models/text-embedding-004",
-            task_type="SEMANTIC_SIMILARITY",
-            google_api_key=conf.get("GEMINI_API_KEY", ""),
-        )
-
-    raise Exception(
-        "No embedding providers are available. Please configure the API keys in .env file."
-    )
-
-
 async def generate_embedding(
-    text: str, provider: str = "gemini", normalize: bool = True
+    text: str, provider: str = "auto", normalize: bool = True
 ) -> List[float] | List[List[float]]:
     """
     Generate an embedding vector for the given text.
 
     Args:
         text: The text to generate embeddings for
-        provider: The embedding provider to use
+        provider: Kept for backwards compatibility, provider is auto-detected
         normalize: Whether to normalize the embedding vector
 
     Returns:
         A list of floats representing the embedding vector
 
     Raises:
-        EmbeddingClientError: If embedding generation fails
+        Exception: If embedding generation fails
     """
     if not text or not text.strip():
         raise Exception("Cannot generate embedding for empty text")
 
     try:
-        embedding_model = get_embedding_model(provider)
+        embedding_model = get_embedding_model()
 
         # Generate embedding
         embeddings = await embedding_model.aembed_documents([text.strip()])

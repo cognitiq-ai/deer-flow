@@ -224,9 +224,9 @@ def reflect_on_research(state: ConceptResearchState, config: RunnableConfig) -> 
     research_mode = state.research_mode or "definition"
 
     if research_mode == "prerequisites":
-        return _concept_prerequisite_reflection(state)
+        return _concept_prerequisite_reflection(state, config)
     else:  # definition mode
-        return _concept_definition_reflection(state)
+        return _concept_definition_reflection(state, config)
 
 
 def _concept_definition_reflection(
@@ -436,10 +436,10 @@ def generate_research_result(
 
     if research_mode == "definition":
         # Generate concept definition
-        return _generate_concept_definition(state)
+        return _generate_concept_definition(state, config)
     else:
         # Generate prerequisites
-        return _generate_prerequisites(state)
+        return _generate_prerequisites(state, config)
 
 
 def _generate_concept_definition(

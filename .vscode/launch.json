@@ -1,7 +1,20 @@
 {
     "version": "0.2.0",
     "configurations": [
-        
+        {
+            "name": "KG Demo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "demo.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--interactive",
+                "--debug-mode",
+                "rich",
+                "--enable-rich-output",
+                "--show-interactive"
+            ]
+        },
         {
             "name": "Debug Tests",
             "type": "debugpy",
@@ -50,7 +63,11 @@
                 "PYTHONPATH": "${workspaceFolder}"
             },
             "args": [
-                "--debug", "--max_plan_iterations", "1", "--max_step_num", "1"
+                "--debug",
+                "--max_plan_iterations",
+                "1",
+                "--max_step_num",
+                "1"
             ]
         },
         {

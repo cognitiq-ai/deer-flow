@@ -211,7 +211,7 @@ async def _generate_content(
         return None
 
 
-def content_generator(
+async def content_generator(
     concept_node_data: Dict[str, Any],
     awg_context_data: Dict[str, Any],
     goal_context_data: Dict[str, Any],
@@ -268,8 +268,8 @@ def content_generator(
         # Get configuration for deer-flow settings
         config = Configuration()
 
-        educational_report = asyncio.run(
-            _generate_content(educational_context, concept_node, session_log, config)
+        educational_report = await _generate_content(
+            educational_context, concept_node, session_log, config
         )
 
         if not educational_report:

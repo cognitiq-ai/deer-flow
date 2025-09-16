@@ -64,13 +64,14 @@ async def session_orchestrator(
 
         # Get configuration
         pkg_interface = PKGInterface()
+        session_log_global.log("INFO", "Connected to Neo4j database")
 
         # Session Initialization
         iteration_main_current = 0
         session_log_global.log("INFO", "KG1: Session initialization started")
 
         # Call IdentifyGoalAndInitialAWG
-        identified_goal, initial_awg = identify_goal(
+        identified_goal, initial_awg = await identify_goal(
             uqc, pkg_interface, session_log_global
         )
 
@@ -152,13 +153,33 @@ async def session_orchestrator(
                             "session_log_data": {"logs": session_log_global.logs},
                         }
 
-                        # Submit KG3 inner loop processor as async Celery task
-                        task = inner_loop.delay(
-                            concept_focus_data=task_data["concept_focus_data"],
-                            goal_context_data=task_data["goal_context_data"],
-                            awg_context_data=task_data["awg_context_data"],
-                            session_log_data=task_data["session_log_data"],
-                        )
+                        # Submit KG3 inner loop processor (try Celery, fallback to direct call)
+                        try:
+                            # Try Celery task first
+                            task = inner_loop.delay(
+                                concept_focus_data=task_data["concept_focus_data"],
+                                goal_context_data=task_data["goal_context_data"],
+                                awg_context_data=task_data["awg_context_data"],
+                                session_log_data=task_data["session_log_data"],
+                            )
+                        except AttributeError:
+                            # Fallback to direct function call if Celery not available
+                            class DirectTaskResult:
+                                def __init__(self, result):
+                                    self.result = result
+                                    self.id = "direct"
+
+                                def get(self, timeout=None):
+                                    return self.result
+
+                            # Call function directly
+                            result = await inner_loop(
+                                concept_focus_data=task_data["concept_focus_data"],
+                                goal_context_data=task_data["goal_context_data"],
+                                awg_context_data=task_data["awg_context_data"],
+                                session_log_data=task_data["session_log_data"],
+                            )
+                            task = DirectTaskResult(result)
                         batch_tasks.append((task, concept.name))
 
                     # Wait for all tasks in this batch to complete
@@ -167,7 +188,7 @@ async def session_orchestrator(
                         try:
                             # Wait for task completion with timeout
                             result = task.get(timeout=300)  # 5 minute timeout per task
-                            batch_results.append(result)
+                            batch_results.append((result, True))
 
                             # Trigger inner loop complete callback (success)
                             if hasattr(session_log_global, "log_inner_loop_complete"):
@@ -213,8 +234,14 @@ async def session_orchestrator(
 
             # Update AWG_Session (KG4)
             try:
+                # Extract only the results from tuples (result, status)
+                inner_loop_results = [
+                    result
+                    for result, status in current_iteration_inner_loop_results
+                    if status
+                ]
                 updated_awg_session, consolidation_status = awg_consolidator(
-                    current_iteration_inner_loop_results,
+                    inner_loop_results,
                     pkg_interface,
                     session_log_global,
                 )
@@ -355,15 +382,37 @@ async def session_orchestrator(
                             "session_log_data": {"logs": session_log_global.logs},
                         }
 
-                        # Submit educational content processor as async Celery task
-                        task = content_generator.delay(
-                            concept_node_data=task_data["concept_node_data"],
-                            awg_context_data=task_data["awg_context_data"],
-                            goal_context_data=task_data["goal_context_data"],
-                            ordered_nodes_data=task_data["ordered_nodes_data"],
-                            current_node_index=task_data["current_node_index"],
-                            session_log_data=task_data["session_log_data"],
-                        )
+                        # Submit educational content processor (try Celery, fallback to direct call)
+                        try:
+                            # Try Celery task first
+                            task = content_generator.delay(
+                                concept_node_data=task_data["concept_node_data"],
+                                awg_context_data=task_data["awg_context_data"],
+                                goal_context_data=task_data["goal_context_data"],
+                                ordered_nodes_data=task_data["ordered_nodes_data"],
+                                current_node_index=task_data["current_node_index"],
+                                session_log_data=task_data["session_log_data"],
+                            )
+                        except AttributeError:
+                            # Fallback to direct function call if Celery not available
+                            class DirectTaskResult:
+                                def __init__(self, result):
+                                    self.result = result
+                                    self.id = "direct"
+
+                                def get(self, timeout=None):
+                                    return self.result
+
+                            # Call function directly
+                            result = await content_generator(
+                                concept_node_data=task_data["concept_node_data"],
+                                awg_context_data=task_data["awg_context_data"],
+                                goal_context_data=task_data["goal_context_data"],
+                                ordered_nodes_data=task_data["ordered_nodes_data"],
+                                current_node_index=task_data["current_node_index"],
+                                session_log_data=task_data["session_log_data"],
+                            )
+                            task = DirectTaskResult(result)
                         batch_tasks.append(task)
 
                     # Wait for all tasks in this batch to complete
