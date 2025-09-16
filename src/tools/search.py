@@ -19,6 +19,10 @@ from langchain_community.utilities import (
 
 from src.config import SELECTED_SEARCH_ENGINE, SearchEngine, load_yaml_config
 from src.tools.decorators import create_logged_tool
+from src.tools.searxng_search.searxng_search_api_wrapper import (
+    CustomSearxSearchResults,
+    CustomSearxSearchWrapper,
+)
 from src.tools.tavily_search.tavily_search_results_with_images import (
     TavilySearchWithImages,
 )
@@ -31,6 +35,7 @@ LoggedDuckDuckGoSearch = create_logged_tool(DuckDuckGoSearchResults)
 LoggedBraveSearch = create_logged_tool(BraveSearch)
 LoggedArxivSearch = create_logged_tool(ArxivQueryRun)
 LoggedWikipediaSearch = create_logged_tool(WikipediaQueryRun)
+LoggedSearxSearch = create_logged_tool(CustomSearxSearchResults)
 
 
 def get_search_config():
@@ -96,6 +101,14 @@ def get_web_search_tool(max_search_results: int):
                 load_all_available_meta=True,
                 doc_content_chars_max=wiki_doc_content_chars_max,
             ),
+        )
+    elif SELECTED_SEARCH_ENGINE == SearchEngine.SEARXNG.value:
+        return LoggedSearxSearch(
+            name="web_search",
+            wrapper=CustomSearxSearchWrapper(
+                searx_host=os.getenv("SEARXNG_API_URL", "http://localhost:8080")
+            ),
+            kwargs={"num_results": max_search_results},
         )
     else:
         raise ValueError(f"Unsupported search engine: {SELECTED_SEARCH_ENGINE}")

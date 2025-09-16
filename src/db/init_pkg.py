@@ -16,12 +16,12 @@ import sys
 from dotenv import load_dotenv
 
 # Add project root to path so we can import our modules
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, project_root)
 
 try:
-    from .neo4j_client import Neo4jClient
-    from .neo4j_schema import Neo4jSchema
+    from src.db.neo4j_client import Neo4jClient
+    from src.db.neo4j_schema import Neo4jSchema
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("Please ensure you're running this script from the project root directory.")

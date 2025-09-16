@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 from typing import List
@@ -143,15 +144,18 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
     try:
         # Perform the search
         search_results = search_tool.invoke(query)
-        if isinstance(search_results, str):
-            search_results = {"result_summary": search_results, "results": []}
+        if isinstance(search_results, list):
+            search_results = {"results": search_results, "result_summary": ""}
+        elif isinstance(search_results, str):
+            search_results = json.loads(search_results)
+
         research_output = ResearchOutput(
             query_result_summary=ResearchQA(
                 query=query, result_summary=search_results.get("result_summary", "")
             ),
             sources=[
                 ResearchSource(
-                    url=result["url"], title=result["title"], snippet=result["snippet"]
+                    url=result["url"], title=result["title"], snippet=result["content"]
                 )
                 for result in search_results["results"]
             ],

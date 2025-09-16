@@ -216,6 +216,31 @@ def get_embedding_model() -> OpenAIEmbeddings | GoogleGenerativeAIEmbeddings:
     return embedding
 
 
+def get_embedding_dimension() -> int:
+    """Get the embedding dimension for the configured model."""
+    # Load configuration to get model details
+    conf = load_yaml_config(_get_config_file_path())
+
+    embedding_conf = conf.get("EMBEDDING_MODEL", {})
+    model_name = embedding_conf.get("model", "")
+    platform = embedding_conf.get("platform", "").lower()
+
+    # Common embedding model dimensions
+    model_dimensions = {
+        # OpenAI models
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+        # Google Gemini models
+        "gemini-embedding-001": 3072,
+    }
+
+    # Check if we know the dimension for this model
+    if model_name in model_dimensions:
+        return model_dimensions[model_name]
+    else:
+        raise ValueError(f"Unknown embedding model: {model_name}")
+
+
 def get_configured_llm_models() -> dict[str, list[str]]:
     """
     Get all configured LLM models grouped by type.
