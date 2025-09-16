@@ -22,10 +22,10 @@ from src.kg.state import (
 from src.llms.llm import generate_embedding
 from src.orchestrator.models import SessionLog, UserQueryContext
 
-DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai")
+DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "auto")
 
 
-def identify_goal(
+async def identify_goal(
     uqc: UserQueryContext,
     pkg_interface: PKGInterface,
     session_log: SessionLog,
@@ -51,8 +51,8 @@ def identify_goal(
         session_log.log("INFO", f"Search goal in PKG: {uqc.goal_string}")
 
         # Generate embedding for goal string
-        goal_embedding = asyncio.run(
-            generate_embedding(uqc.goal_string, provider=DEFAULT_EMBEDDING_PROVIDER)
+        goal_embedding = await generate_embedding(
+            uqc.goal_string, provider=DEFAULT_EMBEDDING_PROVIDER
         )
         session_log.log(
             "INFO", f"Generated goal embedding with dimension: {len(goal_embedding)}"
@@ -100,7 +100,7 @@ def identify_goal(
         goal_concept = ConceptNode(
             id=str(uuid.uuid4()),
             name=uqc.goal_string,
-            topic=uqc.raw_topic_string,
+            topic=uqc.raw_topic_string or "",  # Ensure topic is never None
             node_type="concept",
             name_embedding=goal_embedding,
             last_updated_timestamp=datetime.now(),
@@ -131,7 +131,7 @@ def identify_goal(
         return None, AgentWorkingGraph()
 
 
-def inner_loop(
+async def inner_loop(
     concept_focus_data: Dict[str, Any],
     goal_context_data: Dict[str, Any],
     awg_context_data: Dict[str, Any],
@@ -187,7 +187,7 @@ def inner_loop(
             goal_context=goal_context_str,
             awg_context=awg_context,
             research_mode="definition",
-            max_iterations=config.max_definition_research_loops,
+            max_iterations=config["max_definition_research_loops"],
         )
 
         definition_state = ConceptResearchState(
@@ -227,10 +227,8 @@ def inner_loop(
                     "INFO",
                     f"Generating embedding for concept definition: {concept_defined.definition[:100]}...",
                 )
-                concept_defined.definition_embedding = asyncio.run(
-                    generate_embedding(
-                        concept_defined.definition, provider=DEFAULT_EMBEDDING_PROVIDER
-                    )
+                concept_defined.definition_embedding = await generate_embedding(
+                    concept_defined.definition, provider=DEFAULT_EMBEDDING_PROVIDER
                 )
                 session_log.log(
                     "INFO",
@@ -941,5 +939,9 @@ def criteria_check(
         return decision, focus_concepts_output
 
     except Exception as e:
+        import traceback
+
+        error_details = traceback.format_exc()
         session_log.log("ERROR", f"KG2: Error in criteria check: {e}")
+        session_log.log("ERROR", f"KG2: Full traceback: {error_details}")
         return "STOP_ERROR", []

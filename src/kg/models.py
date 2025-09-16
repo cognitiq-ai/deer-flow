@@ -447,13 +447,15 @@ class AgentWorkingGraph(BaseModel):
         G = nx.DiGraph()
 
         if rel_type is not None:
-            edges = [
+            filtered_edges = [
                 edge for edge in self.relationships.values() if edge.type == rel_type
             ]
-            nodes = [edge.source_node_id for edge in edges] + [
-                edge.target_node_id for edge in edges
+            nodes = [edge.source_node_id for edge in filtered_edges] + [
+                edge.target_node_id for edge in filtered_edges
             ]
             nodes = {node: self.nodes[node] for node in set(nodes)}
+            # Convert list back to dict for consistent iteration
+            edges = {edge.id: edge for edge in filtered_edges}
         else:
             nodes = self.nodes
             edges = self.relationships
