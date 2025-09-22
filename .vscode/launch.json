@@ -13,7 +13,10 @@
                 "rich",
                 "--enable-rich-output",
                 "--show-interactive"
-            ]
+            ],
+            "env": {
+                "PYDEVD_WARN_EVALUATION_TIMEOUT": "300"
+            }
         },
         {
             "name": "Debug Tests",

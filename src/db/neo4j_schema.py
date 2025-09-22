@@ -10,7 +10,7 @@ from typing import List, Tuple
 from neo4j import GraphDatabase
 
 from src.config.configuration import Configuration
-from src.llms.llm import get_embedding_model
+from src.llms.llm import get_embedding_dimension, get_embedding_model
 
 
 class Neo4jSchema:
@@ -23,9 +23,8 @@ class Neo4jSchema:
             driver: Neo4j driver instance.
         """
         self.driver = driver
-        config = Configuration()
-        self.embedding_model = get_embedding_model(config.embedding_provider)
-        self.embedding_dimension = self.embedding_model.dimension
+        self.embedding_model = get_embedding_model()
+        self.embedding_dimension = get_embedding_dimension()
 
     def create_constraints(self) -> None:
         """Create all required constraints."""

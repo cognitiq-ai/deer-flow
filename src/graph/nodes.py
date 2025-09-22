@@ -25,7 +25,7 @@ from src.tools import (
     get_web_search_tool,
     python_repl_tool,
 )
-from src.tools.search import LoggedTavilySearch
+from src.tools.search import LoggedSearxSearch, LoggedTavilySearch
 from src.utils.json_utils import repair_json_output
 from src.utils.context_manager import ContextManager
 
@@ -71,6 +71,21 @@ def background_investigation_node(state: State, config: RunnableConfig):
         else:
             logger.error(
                 f"Tavily search returned malformed response: {searched_content}"
+            )
+    elif SELECTED_SEARCH_ENGINE == SearchEngine.SEARXNG:
+        searched_content = LoggedSearxSearch(
+            max_results=configurable.max_search_results,
+            format=json,
+        ).invoke({"query": query})
+        background_investigation_results = None
+        if isinstance(searched_content, list):
+            background_investigation_results = [
+                {"title": elem["title"], "content": elem["content"]}
+                for elem in searched_content
+            ]
+        else:
+            logger.error(
+                f"Searxng search returned malformed response: {searched_content}"
             )
     else:
         background_investigation_results = get_web_search_tool(

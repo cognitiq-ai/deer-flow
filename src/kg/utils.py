@@ -3,11 +3,12 @@
 import os
 from copy import deepcopy
 from datetime import datetime
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Type, TypeVar, Union
 
 from cleantext import clean
 from langchain_core.messages import AnyMessage
-from tika import parser
+from pydantic import BaseModel, ValidationError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 from trafilatura.downloads import fetch_response
 
 from src.kg.models import ConceptNode
@@ -15,16 +16,7 @@ from src.kg.schemas import (
     DefinitionResearchReflection,
     PrerequisiteResearchReflection,
 )
-
-# Set tika path as a file://
-os.environ["TIKA_SERVER_JAR"] = "file://" + os.path.join(
-    os.path.dirname(__file__),
-    "..",
-    "..",
-    "..",
-    "tika",
-    "tika-server-standard-3.1.0.jar",
-)
+from tika import parser
 
 
 def tika_extractor(url: str, charlimit: int = 75000, cleantext: bool = True) -> dict:
@@ -256,3 +248,61 @@ def should_continue_research(
 def get_current_date() -> str:
     """Get the current date in a readable format."""
     return datetime.now().strftime("%B %d, %Y")
+
+
+# Type variable for Pydantic models
+T = TypeVar("T", bound=BaseModel)
+
+
+def get_structured_output_with_retry(
+    llm,
+    schema_class: Type[T],
+    messages: Any,
+    max_retries: int = 3,
+    wait_seconds: float = 1.0,
+) -> T:
+    """
+    Get structured output from LLM with automatic retry on validation errors.
+
+    Args:
+        llm: The language model instance
+        schema_class: Pydantic model class for structured output
+        messages: Input messages for the LLM
+        max_retries: Maximum number of retry attempts (default: 3)
+        wait_seconds: Seconds to wait between retries (default: 1.0)
+
+    Returns:
+        Parsed structured output of type T
+
+    Raises:
+        ValidationError: If all retry attempts fail
+    """
+
+    @retry(
+        stop=stop_after_attempt(max_retries),
+        wait=wait_fixed(wait_seconds),
+        retry=retry_if_exception_type((ValidationError, ValueError, TypeError)),
+        reraise=True,
+    )
+    def _get_structured_output() -> T:
+        try:
+            structured_llm = llm.with_structured_output(schema_class)
+            result = structured_llm.invoke(messages)
+
+            # Validate the result is of the expected type
+            if not isinstance(result, schema_class):
+                raise ValidationError(
+                    f"Expected {schema_class.__name__}, got {type(result).__name__}"
+                )
+
+            return result
+
+        except (ValidationError, ValueError, TypeError) as e:
+            print(f"Structured output failed: {e}. Retrying...")
+            raise
+        except Exception as e:
+            # For non-retryable exceptions, convert to ValidationError to stop retrying
+            print(f"Non-retryable error: {e}")
+            raise ValidationError(f"Non-retryable error: {e}")
+
+    return _get_structured_output()

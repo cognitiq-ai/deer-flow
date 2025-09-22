@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 from typing import List
@@ -33,14 +34,13 @@ from src.kg.state import (
 )
 from src.kg.utils import (
     get_research_concept,
+    get_structured_output_with_retry,
     should_continue_research,
     tika_extractor,
     update_messages,
 )
 from src.llms.llm import get_llm_by_type
-from src.tools.search import get_web_search_tool
-
-from ..prompts.kg.prompts import (
+from src.prompts.kg.prompts import (
     concept_definition_instructions,
     definition_query_writer_instructions,
     definition_reflection_instructions,
@@ -49,6 +49,7 @@ from ..prompts.kg.prompts import (
     prerequisites_query_writer_instructions,
     prerequisites_reflection_instructions,
 )
+from src.tools.search import get_web_search_tool
 
 
 # Node implementations
@@ -68,9 +69,8 @@ def generate_queries(state: ConceptResearchState, config: RunnableConfig) -> dic
     # Get the config
     configurable = Configuration.from_runnable_config(config)
 
-    # Initialize LLM with structured output
+    # Initialize LLM
     llm = get_llm_by_type("basic")
-    structured_llm = llm.with_structured_output(SearchQueryList)
 
     # Format the prompt based on research mode
     research_mode = state.research_mode or "definition"
@@ -87,8 +87,8 @@ def generate_queries(state: ConceptResearchState, config: RunnableConfig) -> dic
             top_queries=configurable.max_search_queries,
         )
     messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
-    # Generate the search queries
-    result = structured_llm.invoke(messages)
+    # Generate the search queries with retry
+    result = get_structured_output_with_retry(llm, SearchQueryList, messages)
     queries = [query for query in result.queries if query not in state.query_list][
         : configurable.max_search_queries
     ]
@@ -144,16 +144,15 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
         # Perform the search
         search_results = search_tool.invoke(query)
         if isinstance(search_results, str):
-            search_results = {"result_summary": search_results, "results": []}
+            search_results = json.loads(search_results)
+
         research_output = ResearchOutput(
-            query_result_summary=ResearchQA(
-                query=query, result_summary=search_results.get("result_summary", "")
-            ),
+            query_result_summary=ResearchQA(query=query, result_summary=""),
             sources=[
                 ResearchSource(
-                    url=result["url"], title=result["title"], snippet=result["snippet"]
+                    url=result["url"], title=result["title"], snippet=result["content"]
                 )
-                for result in search_results["results"]
+                for result in search_results
             ],
         )
         return {
@@ -245,9 +244,8 @@ def _concept_definition_reflection(
     # Increment the iteration number
     current_iteration = state.iteration_number + 1
 
-    # Initialize LLM with structured output
+    # Initialize LLM
     llm = get_llm_by_type("basic")
-    structured_llm = llm.with_structured_output(DefinitionResearchReflection)
 
     # Format the reflection prompt
     formatted_prompt = definition_reflection_instructions.format(
@@ -260,8 +258,10 @@ def _concept_definition_reflection(
     messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
 
     try:
-        # Generate reflection
-        reflection_result = structured_llm.invoke(messages)
+        # Generate reflection with retry
+        reflection_result = get_structured_output_with_retry(
+            llm, DefinitionResearchReflection, messages
+        )
         reflection_result.follow_up_queries = [
             query
             for query in reflection_result.follow_up_queries
@@ -314,9 +314,8 @@ def _concept_prerequisite_reflection(
     # Increment the iteration number
     current_iteration = state.iteration_number + 1
 
-    # Initialize LLM with structured output
+    # Initialize LLM
     llm = get_llm_by_type("basic")
-    structured_llm = llm.with_structured_output(PrerequisiteResearchReflection)
 
     # Format the reflection prompt
     formatted_prompt = prerequisites_reflection_instructions.format(
@@ -330,8 +329,10 @@ def _concept_prerequisite_reflection(
     messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
 
     try:
-        # Generate reflection
-        reflection_result = structured_llm.invoke(messages)
+        # Generate reflection with retry
+        reflection_result = get_structured_output_with_retry(
+            llm, PrerequisiteResearchReflection, messages
+        )
         reflection_result.follow_up_queries = [
             query
             for query in reflection_result.follow_up_queries
@@ -455,9 +456,8 @@ def _generate_concept_definition(
         State update with concept definition
     """
 
-    # Initialize LLM with structured output
+    # Initialize LLM
     llm = get_llm_by_type("basic")
-    structured_llm = llm.with_structured_output(ConceptDefinitionOutput)
 
     # Format the definition prompt
     formatted_prompt = concept_definition_instructions.format(
@@ -466,8 +466,10 @@ def _generate_concept_definition(
     messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
 
     try:
-        # Generate concept definition
-        concept_definition = structured_llm.invoke(messages)
+        # Generate concept definition with retry
+        concept_definition = get_structured_output_with_retry(
+            llm, ConceptDefinitionOutput, messages
+        )
 
         return {
             "messages": [
@@ -508,9 +510,8 @@ def _generate_prerequisites(
         State update with prerequisites
     """
 
-    # Initialize LLM with structured output
+    # Initialize LLM
     llm = get_llm_by_type("basic")
-    structured_llm = llm.with_structured_output(ConceptPrerequisiteOutput)
 
     # Format the prerequisites prompt
     formatted_prompt = prerequisite_identification_instructions.format(
@@ -518,8 +519,10 @@ def _generate_prerequisites(
     )
     messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
     try:
-        # Generate prerequisites
-        prerequisites = structured_llm.invoke(messages)
+        # Generate prerequisites with retry
+        prerequisites = get_structured_output_with_retry(
+            llm, ConceptPrerequisiteOutput, messages
+        )
         return {
             "messages": [
                 HumanMessage(content=formatted_prompt),
@@ -607,9 +610,8 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
             RelationshipType.IS_PART_OF,
         ]
 
-    # Initialize LLM with structured output
+    # Initialize LLM
     llm = get_llm_by_type("basic")
-    structured_llm = llm.with_structured_output(InferredRelationship)
 
     # Create relationship type definitions
     all_relationship_types = set(relationship_types).union(
@@ -627,8 +629,10 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
     )
 
     try:
-        # Direct invocation with structured output
-        relationship = structured_llm.invoke(prompt_content)
+        # Direct invocation with structured output and retry
+        relationship = get_structured_output_with_retry(
+            llm, InferredRelationship, prompt_content
+        )
 
         # Check if a relationship was found
         if (
