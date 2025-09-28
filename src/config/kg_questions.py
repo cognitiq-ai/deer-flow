@@ -7,15 +7,15 @@ Built-in questions for Knowledge Graph agent.
 
 # English built-in questions for KG agent
 BUILT_IN_KG_QUESTIONS = [
-    "Learn Python web scraping fundamentals",
-    "Understand machine learning algorithms",
-    "Master React development concepts",
-    "Learn database design principles",
-    "Understand cloud computing architecture",
-    "Learn data structures and algorithms",
-    "Master API development with REST",
-    "Understand cybersecurity fundamentals",
-    "Learn Docker containerization",
+    "Web scraping with Python",
+    "Machine learning algorithms",
+    "React development concepts",
+    "Database design principles",
+    "Cloud computing architecture",
+    "Data structures and algorithms",
+    "API development with REST",
+    "Cybersecurity fundamentals",
+    "Docker containerization",
     "Master GraphQL concepts",
 ]
 

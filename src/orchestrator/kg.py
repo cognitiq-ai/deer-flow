@@ -784,12 +784,8 @@ def criteria_check(
             session_log.log("ERROR", "KG2: Goal node not found in AWG")
             return "STOP_GOAL_UNRESOLVABLE", []
 
-        # Check if goal node itself needs definition/validation
-        min_confidence_threshold = config.min_confidence
-
         if (
             goal_node_in_awg.status == ConceptNodeStatus.STUB
-            or goal_node_in_awg.confidence < min_confidence_threshold
             or not goal_node_in_awg.definition
         ):
             session_log.log(
@@ -826,7 +822,6 @@ def criteria_check(
             # Check if prerequisite is unresolved
             if (
                 prereq_node.status == ConceptNodeStatus.STUB
-                or prereq_node.confidence < min_confidence_threshold
                 or not prereq_node.definition
             ):
                 unresolved_prerequisite_stubs.append(prereq_node)

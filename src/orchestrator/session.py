@@ -336,8 +336,7 @@ async def session_orchestrator(
                 f"KG1: Starting educational content generation for {len(ordered_nodes)} concepts",
                 {
                     "ordered_concepts": [
-                        awg_session.get_node(node_id).name
-                        for node_id in ordered_nodes[:5]
+                        awg_session.get_node(node_id).name for node_id in ordered_nodes
                     ]
                 },  # Log first 5
             )

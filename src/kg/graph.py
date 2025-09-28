@@ -471,6 +471,9 @@ def _generate_concept_definition(
             llm, ConceptDefinitionOutput, messages
         )
 
+        if concept_definition is None:
+            raise Exception("Concept definition is None")
+
         return {
             "messages": [
                 HumanMessage(content=formatted_prompt),
@@ -523,6 +526,10 @@ def _generate_prerequisites(
         prerequisites = get_structured_output_with_retry(
             llm, ConceptPrerequisiteOutput, messages
         )
+
+        if prerequisites is None:
+            raise Exception("Concept prerequisites is None")
+
         return {
             "messages": [
                 HumanMessage(content=formatted_prompt),

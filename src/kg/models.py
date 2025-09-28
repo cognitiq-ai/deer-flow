@@ -47,17 +47,40 @@ class RelationshipType(str, Enum):
     def description(self) -> str:
         """Return the description of the relationship type."""
         if self == RelationshipType.HAS_PREREQUISITE:
-            return "A prerequiste relationship exists between the concepts"
+            return (
+                "**Prerequisite (HAS_PREREQUISITE)**: A dependency relationship exists between the concepts. "
+                + "A directed link A -> B means A requires prior understanding of B. "
+                + "Example: Solving quadratic equations HAS_PREREQUISITE completing the square. "
+                + "Structures learning order: ensures foundational knowledge is secured before tackling dependent concepts. Guides adaptive sequencing, remediation, and personalized study paths."
+            )
         elif self == RelationshipType.FULFILS_GOAL:
-            return "A goal fulfillment relationship exists between the concepts"
+            return (
+                "**Fulfillment (FULFILS_GOAL)**: A goal fulfillment relationship exists between the concepts. "
+                + "A directed link A -> B means A fulfills the goal of B."
+            )
         elif self == RelationshipType.IS_TYPE_OF:
             return (
-                "A type/subtype (hierarchical) relationship exists between the concepts"
+                "**Taxonomic (IS_TYPE_OF)**: A hierarchical relationship exists between the concepts. "
+                + "A directed link A -> B meaning A is a subtype or special case of B. "
+                + "E.g. A square IS_TYPE_OF quadrilateral. "
+                + "Organizes concepts into a hierarchy, so specialized ideas fit under broader umbrellas. "
+                + "Supports zooming out to more abstract levels or zooming in to concrete specializations."
             )
         elif self == RelationshipType.IS_PART_OF:
-            return "A part/component (compositional) relationship exists between the concepts"
+            return (
+                "**Meronymy (IS_PART_OF)**: A part-whole compositional relationship exists between the concepts. "
+                + "A directed link A -> B meaning A is a part of B. "
+                + "E.g. The dot product IS_PART_OF the broader topic vector algebra. "
+                + "Helps smaller subskills or components assemble into larger constructs. "
+                + "Guides modular design of lessons: teach the parts before composing the whole."
+            )
         elif self == RelationshipType.IS_DUPLICATE_OF:
-            return "A duplicate relationship exists between the concepts"
+            return (
+                "**Equivalence (IS_DUPLICATE_OF)**: An identity relationship exists between the concepts. "
+                + "A bidirectional link A <-> B means A and B are semantically identical or redundant entries. "
+                + "Example: Dot product IS_DUPLICATE_OF Scalar product. "
+                + "Prevents redundancy in knowledge graphs, merges aliases into a single canonical representation, and ensures consistent reference. Supports cleaner analytics and avoids fragmenting learner progress across duplicate concepts."
+            )
         else:
             return "None of the above relationships exist between these two concepts"
 
@@ -441,7 +464,7 @@ class AgentWorkingGraph(BaseModel):
         return AgentWorkingGraph(nodes, relationships)
 
     def to_networkx_graph(
-        self, rel_type: Optional[RelationshipType] = None
+        self, rel_type: Optional[RelationshipType] = None, reorder: bool = False
     ) -> nx.DiGraph:
         """Convert the working graph to a NetworkX directed graph."""
         G = nx.DiGraph()
@@ -471,13 +494,24 @@ class AgentWorkingGraph(BaseModel):
 
         # Add edges with their data
         for rel_id, relationship in edges.items():
-            G.add_edge(
-                relationship.source_node_id,
-                relationship.target_node_id,
-                id=relationship.id,
-                type=relationship.type,
-                weight=relationship.confidence,
-            )
+            if reorder and relationship.type.reorder:
+                # For reordered types, edge in graph is target->source
+                G.add_edge(
+                    relationship.target_node_id,
+                    relationship.source_node_id,
+                    id=relationship.id,
+                    type=relationship.type,
+                    weight=relationship.confidence,
+                )
+            else:
+                # For non-reordered types, edge in graph is source->target
+                G.add_edge(
+                    relationship.source_node_id,
+                    relationship.target_node_id,
+                    id=relationship.id,
+                    type=relationship.type,
+                    weight=relationship.confidence,
+                )
 
         return G
 
@@ -898,52 +932,205 @@ class AgentWorkingGraph(BaseModel):
         ]
         return sorted(relationships, key=lambda r: r.existence_confidence_llm)
 
-    def remove_cycle_relationship(self, relationship_type: RelationshipType) -> bool:
+    def _break_cycles_for_relationship_type(
+        self, relationship_type: RelationshipType, target_graph: nx.DiGraph = None
+    ) -> List[str]:
         """
-        Remove the lowest confidence relationship that causes a cycle.
+        Remove minimal set of lowest confidence relationships to break all cycles for a specific relationship type.
 
         Args:
-            relationship_type: The type of relationship to check
+            relationship_type: The type of relationship to process
+            target_graph: If provided, check cycles in this graph instead of building a new one
 
         Returns:
-            True if a relationship was removed, False otherwise
+            List of removed relationship IDs
         """
-        # Get all relationships of this type sorted by confidence
-        sorted_relationships = self.get_relationships(relationship_type)
+        removed_rel_ids = []
+        max_iterations = len(self.relationships)  # Safety limit
 
-        for rel in sorted_relationships:
-            # Temporarily remove this relationship
-            temp_rel = self.relationships.pop(rel.id, None)
-            if temp_rel is None:
-                continue
+        for iteration in range(max_iterations):
+            # Build current graph
+            if target_graph is None:
+                G = nx.DiGraph()
+                for node_id in self.nodes.keys():
+                    G.add_node(node_id)
 
-            # Check if removing it breaks the cycle
-            G = nx.DiGraph()
-            for node_id in self.nodes.keys():
-                G.add_node(node_id)
+                for rel in self.relationships.values():
+                    if rel.type == relationship_type:
+                        G.add_edge(rel.source_node_id, rel.target_node_id)
+            else:
+                G = target_graph.copy()
 
-            for remaining_rel in self.relationships.values():
-                if remaining_rel.type == relationship_type:
-                    G.add_edge(
-                        remaining_rel.source_node_id, remaining_rel.target_node_id
+            # Check if acyclic
+            try:
+                list(nx.topological_sort(G))
+                break  # Success! No more cycles
+            except (nx.NetworkXError, nx.NetworkXUnfeasible):
+                pass  # Still has cycles, continue
+
+            # Find all cycles and relationships involved
+            try:
+                cycles = list(nx.simple_cycles(G))
+            except:
+                # Fallback if simple_cycles fails
+                cycles = []
+
+            if not cycles:
+                break  # No cycles found
+
+            # Find all relationships that participate in any cycle
+            cycle_relationships = set()
+            for cycle in cycles:
+                for i in range(len(cycle)):
+                    source = cycle[i]
+                    target = cycle[(i + 1) % len(cycle)]
+
+                    # Find the relationship object for this edge
+                    for rel in self.relationships.values():
+                        if (
+                            rel.type == relationship_type
+                            and rel.source_node_id == source
+                            and rel.target_node_id == target
+                        ):
+                            cycle_relationships.add(rel.id)
+                            break
+
+            # Find the lowest confidence relationship among cycle participants
+            cycle_rel_objects = [
+                rel
+                for rel in self.relationships.values()
+                if rel.id in cycle_relationships and rel.type == relationship_type
+            ]
+
+            if not cycle_rel_objects:
+                break  # Safety: no relationships to remove
+
+            # Remove the lowest confidence relationship
+            lowest_conf_rel = min(
+                cycle_rel_objects, key=lambda r: r.existence_confidence_llm
+            )
+
+            removed_rel_ids.append(lowest_conf_rel.id)
+            del self.relationships[lowest_conf_rel.id]
+
+            # If we're working with a target_graph, update it too
+            if target_graph is not None:
+                if target_graph.has_edge(
+                    lowest_conf_rel.source_node_id, lowest_conf_rel.target_node_id
+                ):
+                    target_graph.remove_edge(
+                        lowest_conf_rel.source_node_id, lowest_conf_rel.target_node_id
                     )
 
-            try:
-                # If no cycle exists now, we found the culprit
-                list(nx.topological_sort(G))
-                return True  # Successfully removed cycle-causing relationship
-            except (nx.NetworkXError, nx.NetworkXUnfeasible):
-                # Still has cycle, restore the relationship and try next one
-                self.relationships[rel.id] = temp_rel
+        return removed_rel_ids
 
-        return False  # Could not resolve cycle by removing relationships
+    def _break_cycles_for_combined_graph(
+        self, relationship_type: RelationshipType, combined_graph: nx.DiGraph
+    ) -> List[str]:
+        """
+        Remove minimal set of lowest confidence relationships to break cycles in a combined graph.
+        Only removes relationships of the specified type, but checks cycles in the entire combined graph.
+
+        Args:
+            relationship_type: The type of relationship to remove (only this type can be removed)
+            combined_graph: The combined graph to check for cycles
+
+        Returns:
+            List of removed relationship IDs
+        """
+        removed_rel_ids = []
+        max_iterations = len(self.relationships)  # Safety limit
+
+        for iteration in range(max_iterations):
+            # Check if the combined graph is acyclic
+            try:
+                list(nx.topological_sort(combined_graph))
+                break  # Success! No more cycles
+            except (nx.NetworkXError, nx.NetworkXUnfeasible):
+                pass  # Still has cycles, continue
+
+            # Find all cycles in the combined graph
+            try:
+                cycles = list(nx.simple_cycles(combined_graph))
+            except:
+                # Fallback if simple_cycles fails
+                cycles = []
+
+            if not cycles:
+                break  # No cycles found
+
+            # Find relationships of the current type that participate in any cycle
+            cycle_relationships = set()
+            for cycle in cycles:
+                for i in range(len(cycle)):
+                    source = cycle[i]
+                    target = cycle[(i + 1) % len(cycle)]
+
+                    # Look for relationships of the current type that match this edge
+                    # Note: we need to account for reordering
+                    for rel in self.relationships.values():
+                        if rel.type == relationship_type:
+                            if relationship_type.reorder:
+                                # For reordered types, edge in graph is target->source
+                                if (
+                                    rel.target_node_id == source
+                                    and rel.source_node_id == target
+                                ):
+                                    cycle_relationships.add(rel.id)
+                            else:
+                                # For non-reordered types, edge in graph is source->target
+                                if (
+                                    rel.source_node_id == source
+                                    and rel.target_node_id == target
+                                ):
+                                    cycle_relationships.add(rel.id)
+
+            # Find the lowest confidence relationship among cycle participants
+            cycle_rel_objects = [
+                rel
+                for rel in self.relationships.values()
+                if rel.id in cycle_relationships and rel.type == relationship_type
+            ]
+
+            if not cycle_rel_objects:
+                break  # Safety: no relationships to remove
+
+            # Remove the lowest confidence relationship
+            lowest_conf_rel = min(
+                cycle_rel_objects, key=lambda r: r.existence_confidence_llm
+            )
+
+            removed_rel_ids.append(lowest_conf_rel.id)
+            del self.relationships[lowest_conf_rel.id]
+
+            # Update the combined graph by removing the corresponding edge
+            if relationship_type.reorder:
+                # For reordered types, edge in graph is target->source
+                if combined_graph.has_edge(
+                    lowest_conf_rel.target_node_id, lowest_conf_rel.source_node_id
+                ):
+                    combined_graph.remove_edge(
+                        lowest_conf_rel.target_node_id, lowest_conf_rel.source_node_id
+                    )
+            else:
+                # For non-reordered types, edge in graph is source->target
+                if combined_graph.has_edge(
+                    lowest_conf_rel.source_node_id, lowest_conf_rel.target_node_id
+                ):
+                    combined_graph.remove_edge(
+                        lowest_conf_rel.source_node_id, lowest_conf_rel.target_node_id
+                    )
+
+        return removed_rel_ids
 
     def resolve_cycles(self, combine: bool = False) -> List[str]:
         """
         Preemptively resolve potential cycles in the AWG by removing lowest confidence relationships.
 
-        This method checks for cycles within the current AWG and removes the lowest confidence
-        relationships that cause cycles, as suggested in the specification.
+        Args:
+            combine: If False, removes cycles independently for each relationship type.
+                    If True, cumulative approach - first removes HAS_PREREQUISITE cycles,
+                    then adds IS_PART_OF edges and removes cycles again, then same with IS_TYPE_OF.
 
         Returns:
             List of relationship IDs that were removed
@@ -955,44 +1142,33 @@ class AgentWorkingGraph(BaseModel):
             RelationshipType.IS_TYPE_OF,
         ]
 
-        G = nx.DiGraph()
-        for rel_type in cycle_prone_types:
-            # Keep trying to remove cycle-causing relationships until no more cycles exist
-            max_attempts = 10  # Prevent infinite loops
-            attempt = 0
+        if combine:
+            # Cumulative approach: build graph progressively and remove cycles at each step
+            G = nx.DiGraph()
 
-            while attempt < max_attempts:
-                # Check if there are cycles for this relationship type
-                if combine:
-                    curr = self.to_networkx_graph(rel_type)
-                    G = (
-                        nx.compose(curr.reverse(), G)
-                        if rel_type.reorder
-                        else nx.compose(curr, G)
-                    )
-                else:
-                    G = self.to_networkx_graph(rel_type)
+            # Add all nodes to the combined graph
+            for node_id in self.nodes.keys():
+                G.add_node(node_id)
 
-                try:
-                    # If this succeeds, no cycle exists
-                    list(nx.topological_sort(G))
-                    break  # No cycle, move to next relationship type
-                except (nx.NetworkXError, nx.NetworkXUnfeasible):
-                    # Cycle exists, try to remove the lowest confidence relationship
-                    # First, get all relationship IDs before removal
-                    before_removal_ids = set(self.relationships.keys())
+            for rel_type in cycle_prone_types:
+                # Add edges of this relationship type to the combined graph
+                for rel in self.relationships.values():
+                    if rel.type == rel_type:
+                        if rel_type.reorder:
+                            # Reverse the edge direction for this relationship type
+                            G.add_edge(rel.target_node_id, rel.source_node_id)
+                        else:
+                            G.add_edge(rel.source_node_id, rel.target_node_id)
 
-                    removed = self.remove_cycle_relationship(rel_type)
-                    if removed:
-                        # Find which relationship was removed
-                        after_removal_ids = set(self.relationships.keys())
-                        removed_this_time = before_removal_ids - after_removal_ids
-                        removed_rel_ids.extend(list(removed_this_time))
-                    else:
-                        # Could not resolve cycle, stop trying
-                        break
+                # Remove cycles from the combined graph by removing relationships of this type
+                removed_this_type = self._break_cycles_for_combined_graph(rel_type, G)
+                removed_rel_ids.extend(removed_this_type)
 
-                attempt += 1
+        else:
+            # Independent approach: remove cycles for each relationship type separately
+            for rel_type in cycle_prone_types:
+                removed_this_type = self._break_cycles_for_relationship_type(rel_type)
+                removed_rel_ids.extend(removed_this_type)
 
         return removed_rel_ids
 
@@ -1004,12 +1180,31 @@ class AgentWorkingGraph(BaseModel):
         - iterates neighbors furthest-from-goal first (so whole families are explored
             and emitted contiguously in postorder whenever possible).
         """
+        # Resolve cycles to get a DAG
         self.resolve_cycles(combine=True)
-        G = self.to_networkx_graph()
-        goal = [node for node in self.nodes.values() if node.node_type == "goal"][0].id
+        # Convert to NetworkX graph with reordering
+        G = self.to_networkx_graph(reorder=True)
+        # Confirm DAG
         if not nx.is_directed_acyclic_graph(G):
             raise ValueError("Input must be a DAG")
+        # Get the goal node
+        goal = [node for node in self.nodes.values() if node.node_type == "goal"][0].id
+        # Approach 1: Simple DFS postorder traversal
+        # Get the goal adjacent node (goal-concept)
+        goal_adj = self.get_relationships_by_target(goal)[0].source_node_id
+        # Remove all stubs and the goal node from the graph
+        rem = [
+            node
+            for node in G.nodes()
+            if G.nodes[node]["status"] == ConceptNodeStatus.STUB or node == goal
+        ]
+        # Remove all stubs and the goal node from the graph
+        G.remove_nodes_from(rem)
+        # Do a DFS postorder traversal on the reversed graph
+        post = list(nx.dfs_postorder_nodes(G.reverse(), source=goal_adj))
+        return list(map(lambda x: self.get_node(x).id, post))
 
+        # Approach #2: Use the longest distance to the goal
         NEG_INF = -(10**9)
 
         def longest_distance(G, node):
@@ -1051,7 +1246,7 @@ class AgentWorkingGraph(BaseModel):
             if n not in visited:
                 dfs(n)
 
-        return list(map(lambda x: self.get_node(x).name, post))
+        return list(map(lambda x: self.get_node(x).id, post))
 
     def get_definitions(self) -> Dict[str, str]:
         """
