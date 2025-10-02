@@ -96,9 +96,6 @@ class ConceptDefinitionOutput(BaseModel):
     """Structured output schema for concept definition agent."""
 
     definition: str = Field(description="Comprehensive definition of the concept")
-    definition_confidence: float = Field(
-        ge=0.0, le=1.0, description="Confidence in definition accuracy (0.0-1.0)"
-    )
     sources: List[str] = Field(
         default_factory=list,
         description="Source ids (`sources.id`) for research citations",

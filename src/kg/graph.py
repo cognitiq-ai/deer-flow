@@ -70,7 +70,8 @@ def generate_queries(state: ConceptResearchState, config: RunnableConfig) -> dic
     configurable = Configuration.from_runnable_config(config)
 
     # Initialize LLM
-    llm = get_llm_by_type("basic")
+    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
+    llm = get_llm_by_type(llm_type)
 
     # Format the prompt based on research mode
     research_mode = state.research_mode or "definition"
@@ -245,7 +246,8 @@ def _concept_definition_reflection(
     current_iteration = state.iteration_number + 1
 
     # Initialize LLM
-    llm = get_llm_by_type("basic")
+    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
+    llm = get_llm_by_type(llm_type)
 
     # Format the reflection prompt
     formatted_prompt = definition_reflection_instructions.format(
@@ -315,7 +317,8 @@ def _concept_prerequisite_reflection(
     current_iteration = state.iteration_number + 1
 
     # Initialize LLM
-    llm = get_llm_by_type("basic")
+    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
+    llm = get_llm_by_type(llm_type)
 
     # Format the reflection prompt
     formatted_prompt = prerequisites_reflection_instructions.format(
@@ -456,8 +459,12 @@ def _generate_concept_definition(
         State update with concept definition
     """
 
+    # Get the config
+    configurable = Configuration.from_runnable_config(config)
+
     # Initialize LLM
-    llm = get_llm_by_type("basic")
+    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
+    llm = get_llm_by_type(llm_type)
 
     # Format the definition prompt
     formatted_prompt = concept_definition_instructions.format(
@@ -488,7 +495,6 @@ def _generate_concept_definition(
         # Return minimal definition on error
         default_definition = ConceptDefinitionOutput(
             definition=f"Unable to generate definition for {state.concept.name}.",
-            definition_confidence=0.0,
             sources=[],
         )
         return {
@@ -513,8 +519,12 @@ def _generate_prerequisites(
         State update with prerequisites
     """
 
+    # Get the config
+    configurable = Configuration.from_runnable_config(config)
+
     # Initialize LLM
-    llm = get_llm_by_type("basic")
+    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
+    llm = get_llm_by_type(llm_type)
 
     # Format the prerequisites prompt
     formatted_prompt = prerequisite_identification_instructions.format(
@@ -606,6 +616,9 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
     Returns:
         Relationship object if one exists, None otherwise
     """
+    # Get the config
+    configurable = Configuration.from_runnable_config(config)
+
     concept_a = state.concept_a
     concept_b = state.concept_b
     relationship_types = state.relationship_types
@@ -618,7 +631,8 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
         ]
 
     # Initialize LLM
-    llm = get_llm_by_type("basic")
+    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
+    llm = get_llm_by_type(llm_type)
 
     # Create relationship type definitions
     all_relationship_types = set(relationship_types).union(

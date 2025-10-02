@@ -136,6 +136,7 @@ async def inner_loop(
     goal_context_data: Dict[str, Any],
     awg_context_data: Dict[str, Any],
     session_log_data: Dict[str, Any],
+    config_data: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
     KG3: Inner_Loop_Concept_Processor Celery task.
@@ -177,7 +178,7 @@ async def inner_loop(
 
         config = {
             "configurable": {
-                "thread_id": "default",
+                "enable_deep_thinking": config_data.get("enable_deep_thinking", True),
             },
             "max_definition_research_loops": 100,
         }
@@ -191,7 +192,7 @@ async def inner_loop(
         )
 
         definition_state = ConceptResearchState(
-            **concept_research_graph.invoke(initial_definition_state)
+            **concept_research_graph.invoke(initial_definition_state, config)
         )
         research_output = definition_state.structured_output
 
@@ -202,7 +203,7 @@ async def inner_loop(
             topic=c_focus.topic,
             definition=research_output.definition,
             definition_research=definition_state.research_results,
-            definition_confidence_llm=research_output.definition_confidence,
+            definition_confidence_llm=definition_state.reflection.confidence_score,
             last_updated_timestamp=datetime.now(),
         )
         awg_context.add_node(concept_defined)
@@ -359,7 +360,7 @@ async def inner_loop(
                     max_iterations=5,
                 )
                 prerequisite_state = ConceptResearchState(
-                    **concept_research_graph.invoke(initial_prerequisite_state)
+                    **concept_research_graph.invoke(initial_prerequisite_state, config)
                 )
 
                 # Extract prerequisites and convert to expected format

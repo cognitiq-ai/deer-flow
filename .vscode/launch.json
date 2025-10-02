@@ -5,7 +5,7 @@
             "name": "KG Demo",
             "type": "debugpy",
             "request": "launch",
-            "program": "demo.py",
+            "program": "main_kg.py",
             "console": "integratedTerminal",
             "args": [
                 "--interactive",

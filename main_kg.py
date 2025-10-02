@@ -272,8 +272,8 @@ if __name__ == "__main__":
             try:
                 with open(conf_file) as f:
                     config = yaml.safe_load(f)
-                if not config or "BASIC_MODEL" not in config:
-                    errors.append("conf.yaml missing BASIC_MODEL configuration")
+                if "BASIC_MODEL" not in config and "REASONING_MODEL" not in config:
+                    errors.append("conf.yaml missing model configuration")
             except Exception as e:
                 errors.append(f"conf.yaml is invalid: {e}")
 

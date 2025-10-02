@@ -4,7 +4,6 @@ This module implements the KG agent components as specified in Knowledge_Graph_A
 """
 
 import asyncio
-import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -161,6 +160,7 @@ async def session_orchestrator(
                                 goal_context_data=task_data["goal_context_data"],
                                 awg_context_data=task_data["awg_context_data"],
                                 session_log_data=task_data["session_log_data"],
+                                config_data=config.__dict__,
                             )
                         except AttributeError:
                             # Fallback to direct function call if Celery not available
@@ -178,6 +178,7 @@ async def session_orchestrator(
                                 goal_context_data=task_data["goal_context_data"],
                                 awg_context_data=task_data["awg_context_data"],
                                 session_log_data=task_data["session_log_data"],
+                                config_data=config.__dict__,
                             )
                             task = DirectTaskResult(result)
                         batch_tasks.append((task, concept.name))
