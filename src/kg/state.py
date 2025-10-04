@@ -72,7 +72,6 @@ class ConceptResearchState(BaseModel):
             SystemMessage(
                 content=system_message_research.format(
                     current_date=get_current_date(),
-                    concept_topic=self.concept.topic,
                     goal_context=self.goal_context,
                     concept_definitions_str=yaml.dump(
                         self.awg_context.get_definitions(), sort_keys=False

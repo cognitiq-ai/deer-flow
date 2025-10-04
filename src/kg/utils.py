@@ -51,7 +51,10 @@ def get_research_concept(concept: ConceptNode, goal_context: str) -> str:
         concept_definition = concept.definition or ""
         return f"{concept.name}: {concept_definition}"
     else:
-        return f"{concept.topic} to {goal_context}"
+        if concept.topic:
+            return f"{concept.topic} to {goal_context}"
+        else:
+            return goal_context
 
 
 def update_messages(

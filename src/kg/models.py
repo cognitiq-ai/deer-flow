@@ -28,6 +28,7 @@ class ConceptNodeStatus(str, Enum):
     )
     CANONICAL = "canonical"  # Verified and canonical definition
     DEPRECATED = "deprecated"  # No longer valid or relevant
+    GOAL_FULFILLED = "goal_fulfilled"  # Goal is fulfilled
 
 
 class RelationshipType(str, Enum):

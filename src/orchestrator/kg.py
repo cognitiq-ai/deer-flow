@@ -97,34 +97,12 @@ async def identify_goal(
         initial_awg = AgentWorkingGraph()
         initial_awg.add_node(identified_goal)
 
-        goal_concept = ConceptNode(
-            id=str(uuid.uuid4()),
-            name=uqc.goal_string,
-            topic=uqc.raw_topic_string or "",  # Ensure topic is never None
-            node_type="concept",
-            name_embedding=goal_embedding,
-            last_updated_timestamp=datetime.now(),
-        )
-
-        # Create the goal-concept relationship in AWG
-        goal_relationship = Relationship(
-            id=str(uuid.uuid4()),
-            source_node_id=goal_concept.id,
-            target_node_id=identified_goal.id,
-            type=RelationshipType.FULFILS_GOAL,
-            last_updated_timestamp=datetime.now(),
-        )
-
-        # Add the nodes/relationships to AWG
-        initial_awg.add_node(goal_concept)
-        initial_awg.add_relationship(goal_relationship)
-
         session_log.log(
             "INFO",
-            f"Initial AWG created with goal {goal_concept.name} and topic {goal_concept.topic}",
+            f"Initial AWG created with goal {identified_goal.name}",
         )
 
-        return goal_concept, initial_awg
+        return identified_goal, initial_awg
 
     except Exception as e:
         session_log.log("ERROR", f"Failed to identify goal and initialize AWG: {e}")
@@ -200,7 +178,6 @@ async def inner_loop(
         concept_defined = ConceptNode(
             id=c_focus.id or str(uuid.uuid4()),
             name=c_focus.name,
-            topic=c_focus.topic,
             definition=research_output.definition,
             definition_research=definition_state.research_results,
             definition_confidence_llm=definition_state.reflection.confidence_score,
@@ -373,7 +350,6 @@ async def inner_loop(
                         ConceptNode(
                             id=prereq_node_id,
                             name=prereq.name,
-                            topic=c_focus.topic,
                             definition=prereq.description,
                             last_updated_timestamp=datetime.now(),
                         ),
@@ -773,7 +749,7 @@ def criteria_check(
         {"goal_node": goal_node_current.name, "goal_id": goal_node_current.id},
     )
 
-    unresolved_prerequisite_stubs = []
+    unresolved_stubs = []
     focus_concepts_output = []
 
     config = Configuration()
@@ -785,10 +761,7 @@ def criteria_check(
             session_log.log("ERROR", "KG2: Goal node not found in AWG")
             return "STOP_GOAL_UNRESOLVABLE", []
 
-        if (
-            goal_node_in_awg.status == ConceptNodeStatus.STUB
-            or not goal_node_in_awg.definition
-        ):
+        if not goal_node_in_awg.definition:
             session_log.log(
                 "INFO",
                 "KG2: Goal node needs definition/validation",
@@ -821,11 +794,8 @@ def criteria_check(
                 continue
 
             # Check if prerequisite is unresolved
-            if (
-                prereq_node.status == ConceptNodeStatus.STUB
-                or not prereq_node.definition
-            ):
-                unresolved_prerequisite_stubs.append(prereq_node)
+            if prereq_node.status == ConceptNodeStatus.STUB:
+                unresolved_stubs.append(prereq_node)
 
                 session_log.log(
                     "INFO",
@@ -834,25 +804,24 @@ def criteria_check(
                         "prereq_id": prereq_id,
                         "status": prereq_node.status,
                         "confidence": prereq_node.confidence,
-                        "has_definition": bool(prereq_node.definition),
+                        "resolved": prereq_node.status
+                        == ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE,
                     },
                 )
 
         session_log.log(
             "INFO",
-            f"KG2: Total unresolved concepts found: {len(unresolved_prerequisite_stubs)}",
-            {"unresolved_count": len(unresolved_prerequisite_stubs)},
+            f"KG2: Total unresolved concepts found: {len(unresolved_stubs)}",
+            {"unresolved_count": len(unresolved_stubs)},
         )
 
         # Step 4: Make Decision
         decision = "CONTINUE_RESEARCH"
 
         # Check stopping conditions
-        total_unresolved = len(unresolved_prerequisite_stubs) + len(
-            focus_concepts_output
-        )
+        total_unresolved = len(unresolved_stubs) + len(focus_concepts_output)
 
-        if total_unresolved == 0 and goal_node_in_awg.definition:
+        if total_unresolved == 0:
             decision = "STOP_PREREQUISITES_MET"
             session_log.log("INFO", "KG2: All prerequisites met, stopping research")
 
@@ -870,7 +839,7 @@ def criteria_check(
 
         # Step 5: Prioritize and Select Top N focus concepts for next iteration
         if decision == "CONTINUE_RESEARCH":
-            all_focus_candidates = focus_concepts_output + unresolved_prerequisite_stubs
+            all_focus_candidates = focus_concepts_output + unresolved_stubs
 
             # Prioritize by:
             # 1. Goal node itself (highest priority)

@@ -7,7 +7,7 @@ Your primary mission is to build a knowledge graph for a user learning about a s
 </goal>
 
 <main_learning_goal>
-**{concept_topic}** in order to **{goal_context}**
+**{goal_context}**
 </main_learning_goal>
 
 <tasks>
