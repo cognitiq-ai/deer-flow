@@ -388,6 +388,10 @@ class AgentWorkingGraph(BaseModel):
         """Get a node from the working graph by ID."""
         return self.nodes.get(node_id)
 
+    def get_node_by_name(self, name: str) -> Optional[ConceptNode]:
+        """Find a node in AWG by name."""
+        return next((node for node in self.nodes.values() if node.name == name), None)
+
     def get_relationship(self, relationship_id: str) -> Optional[Relationship]:
         """Get a relationship from the working graph by ID."""
         return self.relationships.get(relationship_id)
@@ -409,9 +413,13 @@ class AgentWorkingGraph(BaseModel):
         if node_id in self.nodes:
             del self.nodes[node_id]
         # Also delete all relationships with node_id as source or target
-        for rel in self.relationships.values():
-            if rel.source_node_id == node_id or rel.target_node_id == node_id:
-                del self.relationships[rel.id]
+        rels_to_delete = [
+            rel_id
+            for rel_id, rel in list(self.relationships.items())
+            if rel.source_node_id == node_id or rel.target_node_id == node_id
+        ]
+        for rel_id in rels_to_delete:
+            del self.relationships[rel_id]
 
     def delete_relationship(self, relationship_id: str) -> None:
         """Delete a relationship from the working graph."""
@@ -842,13 +850,27 @@ class AgentWorkingGraph(BaseModel):
         if relationship.id is None:
             return
 
+        # First, check if relationship with same ID exists
         existing_rel = self.relationships.get(relationship.id)
         if existing_rel:
             existing_rel.merge_relationship(relationship)
             self.relationships[relationship.id] = existing_rel
-        else:
-            # Add new relationship
-            self.relationships[relationship.id] = relationship
+            return
+
+        # Check for semantic duplicate: same (source, target, type) but different ID
+        for existing_id, existing_rel in self.relationships.items():
+            if (
+                existing_rel.source_node_id == relationship.source_node_id
+                and existing_rel.target_node_id == relationship.target_node_id
+                and existing_rel.type == relationship.type
+            ):
+                # Found a semantic duplicate - merge into existing one
+                existing_rel.merge_relationship(relationship)
+                self.relationships[existing_id] = existing_rel
+                return
+
+        # No duplicate found - add new relationship
+        self.relationships[relationship.id] = relationship
 
     def deep_copy(self) -> "AgentWorkingGraph":
         """Create a deep copy of the working graph."""
@@ -913,6 +935,36 @@ class AgentWorkingGraph(BaseModel):
         # Remove concept2 if it exists
         if concept2.id in self.nodes:
             del self.nodes[concept2.id]
+
+        # CRITICAL FIX: Deduplicate relationships and remove self-loops after merge
+        # Step 1: Remove self-loops (relationships where source == target)
+        self_loop_ids = [
+            rel_id
+            for rel_id, rel in self.relationships.items()
+            if rel.source_node_id == rel.target_node_id
+        ]
+        for rel_id in self_loop_ids:
+            del self.relationships[rel_id]
+
+        # Step 2: Deduplicate relationships with same (source, target, type)
+        # Build a map of (source, target, type) -> list of relationships
+        rel_groups = {}
+        for rel_id, rel in list(self.relationships.items()):
+            key = (rel.source_node_id, rel.target_node_id, rel.type)
+            if key not in rel_groups:
+                rel_groups[key] = []
+            rel_groups[key].append(rel)
+
+        # Step 3: For each group with duplicates, merge them into one
+        for key, rels in rel_groups.items():
+            if len(rels) > 1:
+                # Keep the first relationship and merge others into it
+                primary_rel = rels[0]
+                for duplicate_rel in rels[1:]:
+                    primary_rel.merge_relationship(duplicate_rel)
+                    # Remove the duplicate from the graph
+                    if duplicate_rel.id in self.relationships:
+                        del self.relationships[duplicate_rel.id]
 
         return concept1
 
@@ -1191,18 +1243,16 @@ class AgentWorkingGraph(BaseModel):
         # Get the goal node
         goal = [node for node in self.nodes.values() if node.node_type == "goal"][0].id
         # Approach 1: Simple DFS postorder traversal
-        # Get the goal adjacent node (goal-concept)
-        goal_adj = self.get_relationships_by_target(goal)[0].source_node_id
-        # Remove all stubs and the goal node from the graph
+        # Remove all stubs from the graph
         rem = [
             node
             for node in G.nodes()
-            if G.nodes[node]["status"] == ConceptNodeStatus.STUB or node == goal
+            if G.nodes[node]["status"] == ConceptNodeStatus.STUB
         ]
         # Remove all stubs and the goal node from the graph
         G.remove_nodes_from(rem)
         # Do a DFS postorder traversal on the reversed graph
-        post = list(nx.dfs_postorder_nodes(G.reverse(), source=goal_adj))
+        post = list(nx.dfs_postorder_nodes(G.reverse(), source=goal))
         return list(map(lambda x: self.get_node(x).id, post))
 
         # Approach #2: Use the longest distance to the goal

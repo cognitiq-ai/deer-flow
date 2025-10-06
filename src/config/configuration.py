@@ -50,7 +50,7 @@ class Configuration:
     max_search_results: int = 10  # Maximum number of search results
     mcp_settings: dict = None  # MCP settings, including dynamic loaded tools
     report_style: str = ReportStyle.ACADEMIC.value  # Report style
-    enable_deep_thinking: bool = True  # Whether to enable deep thinking
+    enable_deep_thinking: bool = False  # Whether to enable deep thinking
 
     # Knowledge Graph
     reflection_confidence = 0.8  # Minimum reflection confidence threshold
@@ -58,7 +58,7 @@ class Configuration:
     max_extract_urls = 2  # Maximum URLs to extract per iteration
     max_iter_until_extraction = 3  # Iterations before enabling content extraction
     min_confidence = 0.7  # Minimum confidence threshold for concept research
-    max_iteration_main = 5  # Maximum number of main iterations
+    max_iteration_main = 3  # Maximum number of main iterations
     max_focus_concepts = 5  # Maximum number of focus concepts per iter
     max_parallel_inner_loops = 5  # Maximum number of parallel inner loops
     max_research_depth = 100  # Maximum number of research depth

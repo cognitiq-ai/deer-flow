@@ -107,7 +107,7 @@ Based on the `<search_results>` and `<content_extraction_results>`, answer the f
 
 # Reflection prompt - Prerequisites Research
 prerequisites_reflection_instructions = """RESEARCH REFLECTION STAGE: 
-**Task: Reflect on the `<search_results>` and `<content_extraction_results>` for identifying prerequisites for the `<research_concept>`.**
+**Task: Reflect on the `<search_results>` and `<content_extraction_results>` for identifying prerequisites for the current `<research_concept>`.**
 
 <research_concept>
 {research_concept}
@@ -128,22 +128,7 @@ Here are the prerequisites discovered thus far:
 {prerequisite_list_str}
 </cumulative_prerequisites>
 
-Based on the `<search_results>` and `<content_extraction_results>`, follow the instructions:
-1.  **Prerequisites Found:** 
-    - List the *direct and specific* prerequisite concepts identified in this round of research not already in `<cumulative_prerequisites>`. 
-    - Pay attention to `<prerequisite_graph>` to understand its current structure and **do not include prerequisites that are already present in `<prerequisite_graph>`**
-    - Avoid indirect/transitive prerequisites, e.g. overly general prerequisites unless they are indeed *direct and specific* to `<research_concept>`.
-    - Ensure that the prerequisites are *immediate* and *necessary* to understand the `<research_concept>`.
-    - Ensure that the prerequisites are *relevant* to the `<main_learning_goal>`.    
-2.  **Knowledge Gaps:** Answer the following questions regarding all the prerequisites, i.e. `<cumulative_prerequisites>` + latest "Prerequisites Found" in the current round:
-    - Are the prerequisites *direct and specific* to the `<research_concept>`? 
-    - Are any likely direct prerequisites to `<research_concept>` still missing? 
-    - Are there any prerequisites that are not *direct and specific* to the `<research_concept>`?
-    - Are the prerequisites relevant to the `<main_learning_goal>`? 
-3.  **Next Steps:**
-    -   List up to {top_queries} follow-up queries not already in `<cumulative_queries_ran>` to find more *specific* and *direct* prerequisites, or to clarify the ones already found. If you are confident the list is complete, return an empty list.
-    -   List up to {top_urls} URLs not already in `<cumulative_url_contents_extracted>` whose content seems essential and has not yet been extracted.
-4.  **Confidence Score (0.0-1.0):** How confident are you that the research so far has identified **all** *direct and necessary* prerequisites, and *only* those?
+Follow the instructions in the output schema `PrerequisiteResearchReflection` field descriptions to formulate a precise response based on the latest `<search_results>` and `<content_extraction_results>`
 """
 
 # Final answer generation prompt - Concept Definition
@@ -154,10 +139,9 @@ concept_definition_instructions = """STRUCTURED ANSWER GENERATION STAGE:
 {research_concept}
 </research_concept>
 
-Focus your attention to all prior `<search_results>`, `<content_extraction_results>` and `<definition_reflection_output>`. Provide your answer as a clear, structured output with:
-- `definition`: the final, structured definition of the `<research_concept>`
-- `definition_confidence`: confidence in the definition (0.0-1.0)
-- `definition_sources`: source urls from the research that support this definition
+Consolidate all prior `<search_results>`, `<content_extraction_results>` and `<definition_reflection_output>` into formulating the definition of the `<research_concept>`
+
+Follow the instructions in the output schema `ConceptDefinitionOutput` field descriptions to formulate a precise response. 
 """
 
 # Prerequisites research prompt
@@ -168,12 +152,9 @@ prerequisite_identification_instructions = """STRUCTURED ANSWER GENERATION STAGE
 {research_concept}
 </research_concept>
 
-Focus your attention to all prior `<search_results>`, `<content_extraction_results>` and `<prerequisite_reflection_output>`. Provide your answer as a clear, structured output with:
--   `prerequisites`: An array of prerequisite objects. Each object should have:
-    -   `name`: The specific name of the prerequisite concept.
-    -   `description`: A short explanation of *why* it is a prerequisite for the `<research_concept>` in this context.
-    -   `sources`: An array of URLs used to identify these prerequisites.
-    -   `confidence`: Your final confidence (0.0-1.0) that this list is both precise (no unnecessary items) and complete (no missing direct items).
+Consolidate all prior `<search_results>`, `<content_extraction_results>` into finding essential direct prerequisite concepts of `<research_concept>`
+
+Follow the instructions in the output schema `ConceptPrerequisiteOutput` field descriptions to formulate a precise response. 
 """
 
 # Infer relationships prompt

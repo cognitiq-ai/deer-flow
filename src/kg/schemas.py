@@ -1,8 +1,9 @@
 """Tools and schemas for the concept research LangGraph agent."""
 
-from typing import List, Optional
+from re import S
+from typing import List, Optional, Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from src.kg.models import RelationshipType
 
@@ -51,20 +52,33 @@ class DefinitionResearchReflection(BaseModel):
 class PrerequisiteResearchReflection(BaseModel):
     """Schema for prerequisite research reflection and gap analysis."""
 
-    prerequisites_found: List[str] = Field(
-        description="List of prerequisite concepts identified in this round of research"
+    current_prerequisites: List[str] = Field(
+        description="Identify the *direct and specific* prerequisite concepts from this round of research"
+        "   - Ensure these are *immediate* and *necessary* to understand the `<research_concept>`"
+        "   - Ensure these are *relevant* to the `<main_learning_goal>`"
+        "   - Check which ones are already present in `<prerequisite_graph>`"
+        "   - Avoid indirect/transitive prerequisites, e.g. overly general concepts unless direct, specific"
     )
     knowledge_gap: str = Field(
-        description="The identified knowledge gaps in the research"
+        description="Answer the following questions regarding all the prerequisites, i.e. `<cumulative_prerequisites>` + `<current_prerequisites>`:"
+        "   - Are these *direct and specific* to the `<research_concept>`?"
+        "   - Are any likely direct prerequisites to `<research_concept>` still missing?"
+        "   - Are the prerequisites relevant to the `<main_learning_goal>`?"
     )
     follow_up_queries: List[str] = Field(
         description="List of self-contained with complete context follow-up queries for additional research"
+        "   - Ensure these are not already in `<cumulative_queries_ran>`."
+        "   - Ensure these target more *specific* and *direct* prerequisites, or to clarify the `<current_prerequisites>`."
+        "   - Return an empty list if you are confident the list is complete."
     )
     urls_to_extract: List[str] = Field(
         description="List of URLs to extract content from"
+        "   - Ensure these are not already in `<cumulative_url_contents_extracted>`."
+        "   - Ensure these are essential to understand the `<research_concept>`."
+        "   - Return an empty list if you are confident the list is complete."
     )
     confidence_score: float = Field(
-        description="Confidence score (0-1) of the current research identifying **all** *direct and necessary* prerequisites",
+        description="Confidence score (0-1) of the current research identifying **all** *direct and necessary* prerequisites and *only* those?",
         ge=0.0,
         le=1.0,
     )
@@ -120,23 +134,51 @@ class InferredRelationship(BaseModel):
     )
 
 
+def make_inferred_relationship_model(
+    allowed: List[RelationshipType],
+) -> Type[BaseModel]:
+    """Create a dynamic Pydantic model that constrains relationship_type to allowed set.
+
+    Always includes NO_RELATIONSHIP as an allowed option so the model can express "none".
+    """
+    allowed_set = set(allowed or [])
+    allowed_set.add(RelationshipType.NO_RELATIONSHIP)
+    # Build a Literal of the raw enum values at runtime
+    literal_values = tuple(rt.value for rt in allowed_set)
+    AllowedLiteral = __import__("typing").Literal.__getitem__(literal_values)
+
+    # Create a new model class dynamically
+    Model = create_model(  # type: ignore[no-any-return]
+        "InferredRelationshipDyn",
+        relationship_type=(AllowedLiteral, ...),
+        direction=(int, ...),
+        confidence=(float, ...),
+        sources=(List[str], []),
+    )
+    return Model
+
+
 class ConceptPrerequisite(BaseModel):
     """Structured output schema for a single **direct** prerequisite."""
 
     name: str = Field(
-        description="The clear and concise name of the prerequisite concept"
+        description="A clear and concise name of the identified prerequisite of `<research_concept>`"
     )
     description: str = Field(
-        description="A brief explanation (1-2 sentences) of *why* this is a direct prerequisite for understanding the concept in the context of <main_learning_topic>"
+        description="A brief explanation of *why* this is a direct prerequisite of `<research_concept>` in the context of <main_learning_topic>"
     )
     confidence: float = Field(
         ge=0.0,
         le=1.0,
-        description="Your confidence that this is a true and essential direct prerequisite",
+        description="The confidence that this is a true and essential direct prerequisite of `<research_concept>`",
     )
     sources: List[str] = Field(
         default_factory=list,
         description="URLs or identifiers of the research sources that support identifying this prerequisite",
+    )
+    node_in_prerequisite_graph: Optional[str] = Field(
+        description="The name of the node (if any) that is already present in the `<prerequisite_graph>` that this prerequisite is a duplicate of, else None/null"
+        "   - Must match an existing node in the `<prerequisite_graph>`"
     )
 
 
@@ -144,5 +186,7 @@ class ConceptPrerequisiteOutput(BaseModel):
     """Structured output schema for a list of prerequisites."""
 
     prerequisites: List[ConceptPrerequisite] = Field(
-        ..., description="List of direct prerequisites for the defined concept"
+        description="List of the identified prerequisites for the defined `<research_concept>`"
+        "   - May contain nodes already in `<prerequisite_graph>` if identified as direct prerequisites of the `<research_concept>`"
+        "   - Must be direct and specific prerequisites of `<research_concept>`"
     )

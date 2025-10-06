@@ -24,6 +24,7 @@ from src.kg.schemas import (
     InferredRelationship,
     PrerequisiteResearchReflection,
     SearchQueryList,
+    make_inferred_relationship_model,
 )
 from src.kg.state import (
     ConceptResearchState,
@@ -356,7 +357,7 @@ def _concept_prerequisite_reflection(
             ],
             "iteration_number": current_iteration,
             "reflection": reflection_result,
-            "prerequisite_list": reflection_result.prerequisites_found,
+            "prerequisite_list": reflection_result.current_prerequisites,
         }
 
     except Exception as e:
@@ -650,16 +651,22 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
     )
 
     try:
-        # Direct invocation with structured output and retry
-        relationship = get_structured_output_with_retry(
-            llm, InferredRelationship, prompt_content
-        )
+        # Direct invocation with structured output and retry using dynamic schema
+        Model = make_inferred_relationship_model(relationship_types)
+        relationship = get_structured_output_with_retry(llm, Model, prompt_content)
 
         # Check if a relationship was found
         if (
             relationship.relationship_type == RelationshipType.NO_RELATIONSHIP
             or relationship.confidence < 0.5
         ):
+            return None
+
+        # relationship.relationship_type is a string (Literal); cast to enum
+        rel_type_enum = RelationshipType(relationship.relationship_type)
+        # Guardrail: Only accept relationship types that were explicitly requested
+        allowed_types = set(relationship_types)
+        if rel_type_enum not in allowed_types:
             return None
 
         # Determine source and target based on relationship type
@@ -676,7 +683,7 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
                 id=str(uuid.uuid4()),
                 source_node_id=source_id,
                 target_node_id=target_id,
-                type=relationship.relationship_type,
+                type=rel_type_enum,
                 discovery_count_llm_inference=1,
                 source_urls=relationship.sources,
                 type_confidence_llm=relationship.confidence,

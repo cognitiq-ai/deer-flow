@@ -291,10 +291,6 @@ class PKGInterface:
         Returns:
             The found or created ConceptNode with updated ID
         """
-        # If node has no ID, generate one
-        if node_data.id is None:
-            node_data.id = str(uuid.uuid4())
-
         # Check if node exists
         existing_node = self.get_node_by_id(node_data.id)
 

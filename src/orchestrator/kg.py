@@ -1,6 +1,6 @@
-import asyncio
 import os
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,7 +41,7 @@ async def identify_goal(
         session_log: Session logger
 
     Returns:
-        Tuple of (identified_goal_node, initial_awg)
+        Tuple of (goal_concept, initial_awg)
     """
     session_log.log("INFO", f"Starting goal identification for: {uqc.goal_string}")
 
@@ -82,6 +82,7 @@ async def identify_goal(
                 node_type="goal",
                 name_embedding=goal_embedding,
                 last_updated_timestamp=datetime.now(),
+                defined_status=ConceptNodeStatus.STUB,
             )
 
             # Create the goal node in PKG
@@ -178,6 +179,7 @@ async def inner_loop(
         concept_defined = ConceptNode(
             id=c_focus.id or str(uuid.uuid4()),
             name=c_focus.name,
+            node_type=c_focus.node_type,  # Preserve the original node type (goal/concept)
             definition=research_output.definition,
             definition_research=definition_state.research_results,
             definition_confidence_llm=definition_state.reflection.confidence_score,
@@ -325,7 +327,6 @@ async def inner_loop(
             session_log.log(
                 "INFO", f"Research Prerequisites for concept: {c_focus.name}"
             )
-            prerequisite_stubs: List[ConceptNode] = []
             try:
                 # Run prerequisite research agent graph
                 initial_prerequisite_state = ConceptResearchState(
@@ -340,52 +341,64 @@ async def inner_loop(
                     **concept_research_graph.invoke(initial_prerequisite_state, config)
                 )
 
-                # Extract prerequisites and convert to expected format
-                prerequisites = []
-                for prereq in prerequisite_state.structured_output.prerequisites:
-                    # Create an ID for the prerequisite node
-                    prereq_node_id = str(uuid.uuid4())
-                    # Create the prerequisite object
-                    prereq_obj = (
-                        ConceptNode(
-                            id=prereq_node_id,
-                            name=prereq.name,
-                            definition=prereq.description,
-                            last_updated_timestamp=datetime.now(),
-                        ),
-                        Relationship(
-                            id=str(uuid.uuid4()),
-                            source_node_id=c_focus.id,
-                            target_node_id=prereq_node_id,
-                            type=RelationshipType.HAS_PREREQUISITE,
-                            discovery_count_llm_inference=1,
-                            source_urls=prereq.sources,
-                            type_confidence_llm=prereq.confidence,
-                            existence_confidence_llm=prereq.confidence,
-                            last_updated_timestamp=datetime.now(),
-                        ),
+                # Extract prerequisites and add to AWG
+                prerequisites = prerequisite_state.structured_output.prerequisites
+                for prereq in prerequisites:
+                    # Create default prerequisite node
+                    prereq_found = False
+                    prereq_node = ConceptNode(
+                        id=str(uuid.uuid4()),
+                        name=prereq.name,
+                        definition=prereq.description,
+                        last_updated_timestamp=datetime.now(),
                     )
-                    prerequisites.append(prereq_obj)
-
-                # Create prerequisite stubs with precise keywords
-                prerequisite_stubs.extend(prerequisites)
+                    # Try to find by node_in_prerequisite_graph first
+                    if prereq.node_in_prerequisite_graph:
+                        existing_node = awg_context.get_node_by_name(
+                            prereq.node_in_prerequisite_graph
+                        )
+                        if existing_node:
+                            prereq_found = True
+                            prereq_node = existing_node
+                    # Fallback to searching by prereq.name
+                    existing_node = awg_context.get_node_by_name(prereq.name)
+                    if existing_node:
+                        prereq_found = True
+                        prereq_node = existing_node
+                    # Add the prerequisite node to AWG
+                    if prereq_found:
+                        session_log.log(
+                            "INFO",
+                            f"Prerequisite {prereq.name} found in AWG",
+                        )
+                    else:
+                        awg_context.add_node(prereq_node)
+                        session_log.log(
+                            "INFO",
+                            f"Prerequisite {prereq.name} added to AWG",
+                        )
+                    # Add the prerequisite relationship to AWG
+                    prereq_rel = Relationship(
+                        id=str(uuid.uuid4()),
+                        source_node_id=c_focus.id,
+                        target_node_id=prereq_node.id,
+                        type=RelationshipType.HAS_PREREQUISITE,
+                        discovery_count_llm_inference=1,
+                        source_urls=prereq.sources,
+                        type_confidence_llm=prereq.confidence,
+                        existence_confidence_llm=prereq.confidence,
+                        last_updated_timestamp=datetime.now(),
+                    )
+                    awg_context.add_relationship(prereq_rel)
 
                 session_log.log(
                     "INFO",
-                    f"Prerequisite research completed, found {len(prerequisite_stubs)} prerequisites",
-                    {"prerequisite_count": len(prerequisite_stubs)},
+                    f"Prerequisite research completed, found {len(prerequisites)} new prerequisites in AWG",
+                    {"new_prerequisite_count": len(prerequisites)},
                 )
 
             except Exception as e:
                 session_log.log("WARNING", f"Prerequisite research failed: {e}")
-
-            # Add the prerequisite relationships to the AWG
-            for stub, rel in prerequisite_stubs:
-                # Add the prerequisite node to AWG
-                awg_context.add_node(stub)
-
-                # Create the prerequisite relationship
-                awg_context.add_relationship(rel)
 
         else:
             # Duplicate concept, skip prerequisite research
@@ -500,9 +513,42 @@ def awg_consolidator(
         },
     )
 
-    # Step 2: Infer relationships between defined concept nodes
+    # Step 2: Find all duplicate stubs by comparing stub node names
+    session_log.log("INFO", "KG4: Step 2 - Merging duplicate stubs")
+
+    # Group stubs by name
+    stubs_by_name = defaultdict(list)
+    all_stubs = [
+        node
+        for _, node in consolidated_awg.nodes.items()
+        if node.status == ConceptNodeStatus.STUB
+    ]
+
+    for node in all_stubs:
+        stubs_by_name[node.name].append(node)
+
+    # Merge all duplicates within each group
+    duplicate_stub_names = []
+    total_merges = 0
+
+    for name, nodes in stubs_by_name.items():
+        if len(nodes) > 1:
+            duplicate_stub_names.append(name)
+            # Keep the first node, merge all others into it
+            target_node = nodes[0]
+            for node_to_merge in nodes[1:]:
+                consolidated_awg.merge_concepts(target_node.id, node_to_merge.id)
+                total_merges += 1
+
     session_log.log(
-        "INFO", "KG4: Step 2 - Inferring relationships between defined concepts"
+        "INFO",
+        f"KG4: Merged {total_merges} duplicate stubs across {len(duplicate_stub_names)} unique names",
+        {"duplicate_stub_names": duplicate_stub_names},
+    )
+
+    # Step 3: Infer relationships between defined concept nodes
+    session_log.log(
+        "INFO", "KG4: Step 3 - Inferring relationships between defined concepts"
     )
 
     inter_concept_relationships = []
@@ -538,7 +584,8 @@ def awg_consolidator(
     other_relationships = [
         rel
         for rel in inter_concept_relationships
-        if rel.type != RelationshipType.IS_DUPLICATE_OF
+        if rel.type
+        not in (RelationshipType.IS_DUPLICATE_OF, RelationshipType.HAS_PREREQUISITE)
     ]
     for rel in other_relationships:
         consolidated_awg.merge_relationship(rel)
@@ -548,8 +595,8 @@ def awg_consolidator(
         f"KG4: Added {len(other_relationships)} non-duplicate relationships to AWG",
     )
 
-    # Step 3: Handle duplicates and merge concepts
-    session_log.log("INFO", "KG4: Step 3 - Handling duplicates and merging concepts")
+    # Step 4: Handle duplicates and merge concepts
+    session_log.log("INFO", "KG4: Step 4 - Handling duplicates and merging concepts")
 
     duplicate_relationships = [
         rel
@@ -605,8 +652,8 @@ def awg_consolidator(
             session_log.log("ERROR", f"KG4: Error merging duplicate concepts: {e}")
             consolidation_status = "PARTIAL_WITH_ISSUES"
 
-    # Step 4: Prepare for PKG commit and handle cycles
-    session_log.log("INFO", "KG4: Step 4 - Preparing for PKG commit")
+    # Step 5: Prepare for PKG commit and handle cycles
+    session_log.log("INFO", "KG4: Step 5 - Preparing for PKG commit")
 
     # Collect nodes and relationships to commit
     commit_nodes: set[ConceptNode] = set()
