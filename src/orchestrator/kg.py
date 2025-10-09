@@ -357,7 +357,7 @@ async def inner_loop(
                         existing_node = awg_context.get_node_by_name(
                             prereq.node_in_prerequisite_graph
                         )
-                        if existing_node:
+                        if existing_node and existing_node.name != prereq.name:
                             prereq_found = True
                             prereq_node = existing_node
                     # Fallback to searching by prereq.name

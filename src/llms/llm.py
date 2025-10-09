@@ -300,6 +300,7 @@ def get_llm_token_limit_by_type(llm_type: str) -> int:
     llm_max_token = conf.get(config_key, {}).get("token_limit")
     return llm_max_token
 
+
 def get_configured_embedding_models() -> dict[str, list[str]]:
     """
     Get configured embedding model.

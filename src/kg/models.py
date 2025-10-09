@@ -229,10 +229,8 @@ class ConceptNode(BaseModel):
 
     def get_status(self) -> ConceptNodeStatus:
         """Determine concept status based on definition and confidence."""
-        if not self.definition or self.confidence < 0.3:
+        if not self.definition or self.confidence == 0.0:
             return ConceptNodeStatus.STUB
-        elif self.confidence < 0.7:
-            return ConceptNodeStatus.DEFINED_LOW_CONFIDENCE
         else:
             return ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE
 

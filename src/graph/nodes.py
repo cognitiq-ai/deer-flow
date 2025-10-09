@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+from functools import partial
 from typing import Annotated, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -11,7 +12,6 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.types import Command, interrupt
-from functools import partial
 
 from src.agents import create_agent
 from src.config.agents import AGENT_LLM_MAP
@@ -26,8 +26,8 @@ from src.tools import (
     python_repl_tool,
 )
 from src.tools.search import LoggedSearxSearch, LoggedTavilySearch
-from src.utils.json_utils import repair_json_output
 from src.utils.context_manager import ContextManager
+from src.utils.json_utils import repair_json_output
 
 from ..config import SELECTED_SEARCH_ENGINE, SearchEngine
 from .schemas import EducationalReportOutput, ReportOutput
