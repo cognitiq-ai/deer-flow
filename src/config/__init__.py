@@ -6,7 +6,12 @@ from dotenv import load_dotenv
 from .configuration import Configuration
 from .loader import load_yaml_config
 from .questions import BUILT_IN_QUESTIONS, BUILT_IN_QUESTIONS_ZH_CN
-from .tools import SELECTED_SEARCH_ENGINE, SearchEngine
+from .tools import (
+    SELECTED_CRAWL_ENGINE,
+    SELECTED_SEARCH_ENGINE,
+    CrawlEngine,
+    SearchEngine,
+)
 
 # Load environment variables
 load_dotenv()
@@ -47,6 +52,8 @@ __all__ = [
     "TEAM_MEMBER_CONFIGURATIONS",
     "SELECTED_SEARCH_ENGINE",
     "SearchEngine",
+    "SELECTED_CRAWL_ENGINE",
+    "CrawlEngine",
     "BUILT_IN_QUESTIONS",
     "BUILT_IN_QUESTIONS_ZH_CN",
     "load_yaml_config",

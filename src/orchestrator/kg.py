@@ -60,7 +60,7 @@ async def identify_goal(
 
         # Search for existing goal nodes using vector similarity
         existing_goals = pkg_interface.vector_search_name(
-            goal_embedding, similarity_threshold=0.9, limit=1, node_type="goal"
+            goal_embedding, similarity_threshold=0.95, limit=1, node_type="goal"
         )
 
         if existing_goals:

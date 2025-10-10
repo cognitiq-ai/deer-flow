@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import re
+from typing import Optional
 from urllib.parse import urljoin
 
 from markdownify import markdownify as md
@@ -10,15 +11,22 @@ from markdownify import markdownify as md
 class Article:
     url: str
 
-    def __init__(self, title: str, html_content: str):
+    def __init__(self, title: str, html_content: str, content: Optional[str] = None):
         self.title = title
         self.html_content = html_content
+        self._content = content
+
+    @property
+    def content(self) -> str:
+        if self._content:
+            return self._content
+        return md(self.html_content)
 
     def to_markdown(self, including_title: bool = True) -> str:
         markdown = ""
         if including_title:
             markdown += f"# {self.title}\n\n"
-        markdown += md(self.html_content)
+        markdown += self.content
         return markdown
 
     def to_message(self) -> list[dict]:

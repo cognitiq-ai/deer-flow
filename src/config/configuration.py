@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from langchain_core.runnables import RunnableConfig
 
-from src.config.loader import get_bool_env, get_int_env, get_str_env
+from src.config.loader import get_int_env, get_str_env
 from src.config.report_style import ReportStyle
 from src.rag.retriever import Resource
 

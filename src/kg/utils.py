@@ -1,39 +1,18 @@
 """Utility functions for the concept research LangGraph agent."""
 
-import os
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict, List, Type, TypeVar, Union
 
-from cleantext import clean
 from langchain_core.messages import AnyMessage
 from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
-from trafilatura.downloads import fetch_response
 
 from src.kg.models import ConceptNode
 from src.kg.schemas import (
     DefinitionResearchReflection,
     PrerequisiteResearchReflection,
 )
-from tika import parser
-
-
-def tika_extractor(url: str, charlimit: int = 75000, cleantext: bool = True) -> dict:
-    """
-    Extract content from a URL.
-    """
-    # Get the raw response
-    response = fetch_response(url)
-    # Parse the buffer content
-    parsed = parser.from_buffer(response.data)
-    if cleantext:
-        content = clean(parsed["content"], lower=False)[:charlimit]
-        title = clean(parsed["metadata"].get("dc.title", ""), lower=False)
-    else:
-        content = parsed["content"][:charlimit]
-        title = parsed["metadata"].get("dc.title", "")
-    return {"url": url, "title": title, "content": content}
 
 
 def get_research_concept(concept: ConceptNode, goal_context: str) -> str:

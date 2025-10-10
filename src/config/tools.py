@@ -19,8 +19,14 @@ class SearchEngine(enum.Enum):
     WIKIPEDIA = "wikipedia"
 
 
+class CrawlEngine(enum.Enum):
+    JINA = "jina"
+    TIKA = "tika"
+
+
 # Tool configuration
 SELECTED_SEARCH_ENGINE = os.getenv("SEARCH_API", SearchEngine.TAVILY.value)
+SELECTED_CRAWL_ENGINE = os.getenv("CRAWL_API", CrawlEngine.JINA.value)
 
 
 class RAGProvider(enum.Enum):

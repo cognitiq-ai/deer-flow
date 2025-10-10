@@ -10,6 +10,7 @@ from langgraph.types import RunnableConfig, Send
 from pydantic import ValidationError
 
 from src.config.configuration import Configuration
+from src.crawler.crawler import Crawler
 from src.kg.models import (
     Relationship,
     RelationshipType,
@@ -21,7 +22,6 @@ from src.kg.schemas import (
     ConceptDefinitionOutput,
     ConceptPrerequisiteOutput,
     DefinitionResearchReflection,
-    InferredRelationship,
     PrerequisiteResearchReflection,
     SearchQueryList,
     make_inferred_relationship_model,
@@ -37,7 +37,6 @@ from src.kg.utils import (
     get_research_concept,
     get_structured_output_with_retry,
     should_continue_research,
-    tika_extractor,
     update_messages,
 )
 from src.llms.llm import get_llm_by_type
@@ -188,8 +187,8 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
     """
     try:
         # Extract content from URL
-        extracted_content = tika_extractor(state.url)
-        source = ResearchSource(**extracted_content)
+        article = Crawler().crawl(state.url)
+        source = ResearchSource(article.url, article.title, article.content)
         return {
             "messages": [
                 HumanMessage(
