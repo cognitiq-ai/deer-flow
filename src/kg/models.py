@@ -606,6 +606,35 @@ class AgentWorkingGraph(BaseModel):
             node_data = G.nodes[node_id]
             concept_node = self.get_node(node_id)
 
+            # Label and hover text
+            node_data["label"] = (
+                concept_node.name[:20] + "..."
+                if len(concept_node.name) > 20
+                else concept_node.name
+            )
+
+            # Create detailed hover text
+            status_name = concept_node.status.value
+            definition_preview = ""
+            if concept_node.definition:
+                definition_preview = concept_node.definition
+
+            hover_lines = [
+                f"<b>{concept_node.name}</b>",
+                f"Topic: {concept_node.topic}" if concept_node.topic else "",
+                f"Status: {status_name}",
+                f"Confidence: {concept_node.confidence:.2f}",
+                f"Type: {concept_node.node_type.title()}",
+            ]
+
+            if concept_node.exists_in_pkg:
+                hover_lines.append("✓ Exists in PKG")
+
+            if definition_preview:
+                hover_lines.append(f"Definition: {definition_preview}")
+
+            node_data["hover"] = "<br>".join(filter(None, hover_lines))
+
             # Goal node
             if concept_node.node_type == "goal":
                 node_data["color"] = "#27ae60"
@@ -632,35 +661,6 @@ class AgentWorkingGraph(BaseModel):
 
                 # Shape by status
                 node_data["shape"] = get_node_shape(concept_node)
-
-                # Label and hover text
-                node_data["label"] = (
-                    concept_node.name[:20] + "..."
-                    if len(concept_node.name) > 20
-                    else concept_node.name
-                )
-
-                # Create detailed hover text
-                status_name = concept_node.status.value
-                definition_preview = ""
-                if concept_node.definition:
-                    definition_preview = concept_node.definition
-
-                hover_lines = [
-                    f"<b>{concept_node.name}</b>",
-                    f"Topic: {concept_node.topic}" if concept_node.topic else "",
-                    f"Status: {status_name}",
-                    f"Confidence: {concept_node.confidence:.2f}",
-                    f"Type: {concept_node.node_type.title()}",
-                ]
-
-                if concept_node.exists_in_pkg:
-                    hover_lines.append("✓ Exists in PKG")
-
-                if definition_preview:
-                    hover_lines.append(f"Definition: {definition_preview}")
-
-                node_data["hover"] = "<br>".join(filter(None, hover_lines))
 
         # Edge properties
         for source, target, edge_data in G.edges(data=True):

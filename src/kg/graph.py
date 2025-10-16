@@ -22,8 +22,9 @@ from src.kg.schemas import (
     ConceptDefinitionOutput,
     ConceptPrerequisiteOutput,
     DefinitionResearchReflection,
+    DefinitionSearchQueryList,
     PrerequisiteResearchReflection,
-    SearchQueryList,
+    PrerequisiteSearchQueryList,
     make_inferred_relationship_model,
 )
 from src.kg.state import (
@@ -82,14 +83,26 @@ def generate_queries(state: ConceptResearchState, config: RunnableConfig) -> dic
             research_concept=get_research_concept(concept, state.goal_context),
             top_queries=configurable.max_search_queries,
         )
+        messages = update_messages(
+            state.messages, [HumanMessage(content=formatted_prompt)]
+        )
+        # Generate the search queries with retry
+        result = get_structured_output_with_retry(
+            llm, PrerequisiteSearchQueryList, messages
+        )
     else:  # definition mode
         formatted_prompt = definition_query_writer_instructions.format(
             research_concept=get_research_concept(concept, state.goal_context),
             top_queries=configurable.max_search_queries,
         )
-    messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
-    # Generate the search queries with retry
-    result = get_structured_output_with_retry(llm, SearchQueryList, messages)
+        messages = update_messages(
+            state.messages, [HumanMessage(content=formatted_prompt)]
+        )
+        # Generate the search queries with retry
+        result = get_structured_output_with_retry(
+            llm, DefinitionSearchQueryList, messages
+        )
+    # Get the queries that are not already in the query list
     queries = [query for query in result.queries if query not in state.query_list][
         : configurable.max_search_queries
     ]

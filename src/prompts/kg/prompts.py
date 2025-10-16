@@ -11,9 +11,9 @@ Your primary mission is to build a knowledge graph for a user learning about a s
 </main_learning_goal>
 
 <tasks>
-You will be given a specific `<research_concept>`. For this concept, you will perform two main tasks in sequence:
+You will be given a specific <research_concept>. For this concept, you will perform two main tasks in sequence:
 1.  **Define the Concept:** Research and create a clear, concise definition relevant to the <main_learning_goal>.
-2.  **Identify Prerequisites:** Research and identify the *direct and specific* prerequisite concepts needed to understand the `<research_concept>`.
+2.  **Identify Prerequisites:** Research and identify the *direct and specific* prerequisite concepts needed to understand the <research_concept>.
 </tasks>
 
 <stages_per_task>
@@ -23,9 +23,9 @@ You will be given a specific `<research_concept>`. For this concept, you will pe
 </stages_per_task>
 
 <instructions>
--   **Stay Focused:** All research, definitions, and prerequisites must be strictly relevant to the `<main_learning_goal>`.
--   **Precision over Generality:** Prefer specific, actionable concepts. Avoid overly broad prerequisites (e.g., "Mathematics"). A prerequisite must be *immediately necessary* for understanding the `<research_concept>`.
--   **Use Provided Context:** Understand the current knowledge state in `<prerequisite_graph>` of concepts and prerequisites discovered along with the concept definitions `<concept_definitions>`. Use this to avoid redundant research and plan subsequent research directions.
+-   **Stay Focused:** All research, definitions, and prerequisites must be strictly relevant to the <main_learning_goal>.
+-   **Precision over Generality:** Prefer specific, actionable concepts. Avoid overly broad prerequisites (e.g., "Mathematics"). A prerequisite must be *immediately necessary* for understanding the <research_concept>.
+-   **Use Provided Context:** Understand the current knowledge state in <prerequisite_graph> of concepts and prerequisites discovered along with the concept definitions <concept_definitions>. Use this to avoid redundant research and plan subsequent research directions.
 </instructions>
 
 <concept_definitions>
@@ -37,7 +37,7 @@ You will be given a specific `<research_concept>`. For this concept, you will pe
 </prerequisite_graph>
 
 <planning_rules> 
-You have been asked to complete the `<tasks>` given the `<concept_definitions>` and `<prerequisite_graph>`. Consider the following when creating a plan to reason about the specific task. 
+You have been asked to complete the <tasks> given the <concept_definitions> and <prerequisite_graph>. Consider the following when creating a plan to reason about the specific task. 
 - If the task specifics are deemed complex, break it down into multiple steps
 - Assess the current state of knowledge and whether it is useful for any steps needed to address the task 
 - Create the best plan that weighs all the evidence from the current state of knowledge 
@@ -50,37 +50,26 @@ You have been asked to complete the `<tasks>` given the `<concept_definitions>` 
 """
 
 # Query generation prompt - Concept Definition Research
-definition_query_writer_instructions = """QUERY GENERATION STAGE:
-**Task: Generate up to {top_queries} search queries to define the `<research_concept>`.**
+definition_query_writer_instructions = """
+Generate up to {top_queries} search queries to define the given <research_concept> :
 
 <research_concept>
 {research_concept}
 </research_concept>
-
-Focus your queries on finding:
--   A core, fundamental explanation.
--   Key characteristics and components.
--   How it's used within the context of the `<main_learning_goal>`.
--   Its relationship to other concepts already in the `<prerequisite_graph>`.
 """
 
 # Query generation prompt - Prerequisites Research
-prerequisites_query_writer_instructions = """QUERY GENERATION STAGE:
-**Task: Generate up to {top_queries} search queries to find the *direct and specific* prerequisites for the `<research_concept>`.**
+prerequisites_query_writer_instructions = """
+Generate up to {top_queries} search queries to find the *direct and specific* prerequisites for the given <research_concept> :
 
 <research_concept>
 {research_concept}
 </research_concept>
-
-Focus your queries on identifying concepts that are *immediately necessary* to understand before tackling the `<research_concept>`. Think about:
--   What do tutorials for this concept teach right before this concept?
--   What prererequisites are referred to in explanations of this concept?
--   Prerequisites for learning `<research_concept>` for `<main_learning_goal>`.
 """
 
 # Reflection prompt - Concept Definition Research
-definition_reflection_instructions = """RESEARCH REFLECTION STAGE: 
-**Task: Reflect on the `<search_results>` and `<content_extraction_results>` for defining the `<research_concept>`.**
+definition_reflection_instructions = """
+Reflect on the cumulative research thus far for defining the <research_concept>:
 
 <research_concept>
 {research_concept}
@@ -92,22 +81,22 @@ Here are the queries ran thus far:
 </cumulative_queries_ran>
 
 Here are the URL contents extracted thus far:
-<cumulative_url_contents_extracted>
+<cumulative_urls_extracted>
 {url_list_str}
-</cumulative_url_contents_extracted>
+</cumulative_urls_extracted>
 
-Based on the `<search_results>` and `<content_extraction_results>`, answer the following:
-1.  **Current Understanding:** Briefly summarize what you've learned about the concept's definition and its role in the `<main_learning_goal>`.
-2.  **Knowledge Gaps:** Is the definition clear, accurate, and comprehensive enough for a learner? Are there any missing key characteristics or contextual examples?
-3.  **Next Steps:**
-    -   List up to {top_queries} follow-up queries to fill these specific gaps. If the definition is complete, return an empty list.
-    -   List up to {top_urls} URLs whose content seems essential and has not yet been extracted.
-4.  **Confidence Score (0.0-1.0):** How complete is your current understanding of this concept's definition?
+<n_top_queries>
+{top_queries}
+</n_top_queries>
+
+<n_top_urls>
+{top_urls}
+</n_top_urls>
 """
 
 # Reflection prompt - Prerequisites Research
-prerequisites_reflection_instructions = """RESEARCH REFLECTION STAGE: 
-**Task: Reflect on the `<search_results>` and `<content_extraction_results>` for identifying prerequisites for the current `<research_concept>`.**
+prerequisites_reflection_instructions = """
+Reflect on the cumulative research thus far for identifying prerequisites of the <research_concept>:
 
 <research_concept>
 {research_concept}
@@ -119,42 +108,44 @@ Here are the queries ran thus far:
 </cumulative_queries_ran>
 
 Here are the URL contents extracted thus far:
-<cumulative_url_contents_extracted>
+<cumulative_urls_extracted>
 {url_list_str}
-</cumulative_url_contents_extracted>
+</cumulative_urls_extracted>
 
 Here are the prerequisites discovered thus far: 
 <cumulative_prerequisites>
 {prerequisite_list_str}
 </cumulative_prerequisites>
 
-Follow the instructions in the output schema `PrerequisiteResearchReflection` field descriptions to formulate a precise response based on the latest `<search_results>` and `<content_extraction_results>`
+<n_top_queries>
+{top_queries}
+</n_top_queries>
+
+<n_top_urls>
+{top_urls}
+</n_top_urls>
 """
 
 # Final answer generation prompt - Concept Definition
-concept_definition_instructions = """STRUCTURED ANSWER GENERATION STAGE: 
-**Task: Synthesize the complete research and reflection into a final, structured definition for the `<research_concept>`.**
+concept_definition_instructions = """
+Synthesize the complete research and reflection into a final, structured definition for the <research_concept>:
 
 <research_concept>
 {research_concept}
 </research_concept>
 
-Consolidate all prior `<search_results>`, `<content_extraction_results>` and `<definition_reflection_output>` into formulating the definition of the `<research_concept>`
-
-Follow the instructions in the output schema `ConceptDefinitionOutput` field descriptions to formulate a precise response. 
+Consolidate all prior research and reflection into formulating the definition of the <research_concept>
 """
 
 # Prerequisites research prompt
-prerequisite_identification_instructions = """STRUCTURED ANSWER GENERATION STAGE: 
-**Task: Synthesize the complete research and reflection into a final, structured list of prerequisites for the `<research_concept>`.**
+prerequisite_identification_instructions = """
+Synthesize the complete research and reflection into a final, structured list of prerequisites for the <research_concept>
 
 <research_concept>
 {research_concept}
 </research_concept>
 
-Consolidate all prior `<search_results>`, `<content_extraction_results>` into finding essential direct prerequisite concepts of `<research_concept>`
-
-Follow the instructions in the output schema `ConceptPrerequisiteOutput` field descriptions to formulate a precise response. 
+Consolidate all prior research and reflection into finding essential direct prerequisite concepts of <research_concept>
 """
 
 # Infer relationships prompt
