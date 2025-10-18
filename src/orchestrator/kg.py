@@ -145,8 +145,6 @@ async def inner_loop(
     session_log.log("INFO", f"Processing focus concept: {c_focus.name}")
 
     try:
-        pkg_interface = PKGInterface()
-
         # Prepare context for the agent
         goal_context_str = goal_context.name
 
@@ -162,7 +160,7 @@ async def inner_loop(
             "max_definition_research_loops": 100,
         }
         # Run definition research agent graph
-        initial_definition_state = ConceptResearchState(
+        initial_state = ConceptResearchState(
             concept=c_focus,
             goal_context=goal_context_str,
             awg_context=awg_context,
@@ -170,247 +168,24 @@ async def inner_loop(
             max_iterations=config["max_definition_research_loops"],
         )
 
-        definition_state = ConceptResearchState(
-            **concept_research_graph.invoke(initial_definition_state, config)
-        )
-        research_output = definition_state.structured_output
+        session_log.log("INFO", f"Starting research process for {c_focus.name}")
 
-        # Create ConceptNode from research output and add to AWG
-        concept_defined = ConceptNode(
-            id=c_focus.id or str(uuid.uuid4()),
-            name=c_focus.name,
-            node_type=c_focus.node_type,  # Preserve the original node type (goal/concept)
-            definition=research_output.definition,
-            definition_research=definition_state.research_results,
-            definition_confidence_llm=definition_state.reflection.confidence_score,
-            last_updated_timestamp=datetime.now(),
-        )
-        awg_context.add_node(concept_defined)
-
-        session_log.log(
-            "INFO",
-            f"Definition research completed with confidence {concept_defined.confidence:.2f}",
-            {
-                "definition": concept_defined.definition,
-                "definition_confidence": concept_defined.definition_confidence_llm,
-                "research_results": len(concept_defined.definition_research),
-            },
-        )
-
-        # Step 2: Search for Related Concepts
-        session_log.log("INFO", "Search for related concepts in PKG")
-        relevant_subgraph = AgentWorkingGraph()
-        try:
-            # Generate embedding and search for related concepts only if we have a definition
-            if concept_defined.definition:
-                session_log.log(
-                    "INFO",
-                    f"Generating embedding for concept definition: {concept_defined.definition[:100]}...",
-                )
-                concept_defined.definition_embedding = await generate_embedding(
-                    concept_defined.definition, provider=DEFAULT_EMBEDDING_PROVIDER
-                )
-                session_log.log(
-                    "INFO",
-                    f"Generated embedding with dimension: {len(concept_defined.definition_embedding)}",
-                )
-
-                # Use vector search to find relevant context
-                relevant_subgraph = pkg_interface.vector_search_definition(
-                    concept_defined.definition_embedding,
-                    limit=2,
-                    similarity_threshold=0.8,
-                )
-
-                session_log.log(
-                    "INFO",
-                    f"Vector search returned {len(relevant_subgraph.nodes)} nodes and {len(relevant_subgraph.relationships)} relationships",
-                )
-
-                # Merge related subgraph with AWG
-                awg_context.merge_awg(relevant_subgraph)
-                session_log.log(
-                    "INFO",
-                    f"Merged {len(relevant_subgraph.nodes)} related concepts to AWG",
-                )
-
-            # Check for new relationships against the related concepts
-            existing_concepts = list(relevant_subgraph.nodes.values())
-            session_log.log(
-                "INFO",
-                f"Inferring relationships with {len(existing_concepts)} related concepts in PKG",
-            )
-
-            initial_relationship_state = InferRelationshipsState(
-                infer_relationships=[
-                    InferRelationshipState(
-                        concept_a=concept_defined, concept_b=existing_concept
-                    )
-                    for existing_concept in existing_concepts
-                ],
-                relationships=[],
-            )
-            # Run relationship inference agent graph
-            relationship_state = InferRelationshipsState(
-                **infer_relationship_graph.invoke(initial_relationship_state)
-            )
-
-            # Get relationships from the result
-            relationships = relationship_state.relationships
-
-            # Get the IS_PART_OF relationships and add to AWG
-            part_ofs: List[Relationship] = [
-                relationship
-                for relationship in relationships
-                if relationship.type == RelationshipType.IS_PART_OF
-            ]
-            for part_of in part_ofs:
-                awg_context.add_relationship(part_of)
-            session_log.log(
-                "INFO", f"Added {len(part_ofs)} part of relationships to AWG"
-            )
-
-            # Get the IS_TYPE_OF relationships and add to AWG
-            type_ofs: List[Relationship] = [
-                relationship
-                for relationship in relationships
-                if relationship.type == RelationshipType.IS_TYPE_OF
-            ]
-            for type_of in type_ofs:
-                awg_context.add_relationship(type_of)
-            session_log.log(
-                "INFO", f"Added {len(type_ofs)} type of relationships to AWG"
-            )
-
-            # Get the duplicate relationship and merge in AWG
-            duplicates: List[Relationship] = [
-                relationship
-                for relationship in relationships
-                if relationship.type == RelationshipType.IS_DUPLICATE_OF
-            ]
-            session_log.log("INFO", f"Found {len(duplicates)} duplicates")
-
-            # Get the duplicate concept node and merge with defined concept
-            duplicate = max(
-                duplicates, key=lambda x: x.existence_confidence_llm, default=None
-            )
-            if duplicate:
-                # Get the duplicate concept node from PKG
-                duplicate_id = (
-                    duplicate.target_node_id
-                    if duplicate.source_node_id == concept_defined.id
-                    else duplicate.source_node_id
-                )
-                duplicate_concept = pkg_interface.get_node_by_id(duplicate_id)
-
-                # Add the related subgraph of duplicate_concept in AWG from PKG
-                duplicate_subgraph = pkg_interface.fetch_subgraph(
-                    [duplicate_concept.id], depth=1
-                )
-                awg_context.merge_awg(duplicate_subgraph)
-
-                # Merge the duplicate concepts in AWG
-                awg_context.merge_concepts(duplicate_concept.id, concept_defined.id)
-                session_log.log(
-                    "INFO",
-                    f"Merged {concept_defined.name} with duplicate concept: {duplicate_concept.name}",
-                )
-
-                # Update the defined concept
-                concept_defined = awg_context.get_node(duplicate_concept.id)
-
-        except Exception as e:
-            session_log.log("WARNING", f"Error searching for relationships: {e}")
-
-        # Step 3: Research Prerequisites
-        if not duplicate:
-            session_log.log(
-                "INFO", f"Research Prerequisites for concept: {c_focus.name}"
-            )
-            try:
-                # Run prerequisite research agent graph
-                initial_prerequisite_state = ConceptResearchState(
-                    messages=definition_state.messages,
-                    concept=c_focus,
-                    goal_context=goal_context_str,
-                    awg_context=awg_context,
-                    research_mode="prerequisites",
-                    max_iterations=5,
-                )
-                prerequisite_state = ConceptResearchState(
-                    **concept_research_graph.invoke(initial_prerequisite_state, config)
-                )
-
-                # Extract prerequisites and add to AWG
-                prerequisites = prerequisite_state.structured_output.prerequisites
-                for prereq in prerequisites:
-                    # Create default prerequisite node
-                    prereq_found = False
-                    prereq_node = ConceptNode(
-                        id=str(uuid.uuid4()),
-                        name=prereq.name,
-                        definition=prereq.description,
-                        last_updated_timestamp=datetime.now(),
-                    )
-                    # Try to find by node_in_prerequisite_graph first
-                    if prereq.node_in_prerequisite_graph:
-                        existing_node = awg_context.get_node_by_name(
-                            prereq.node_in_prerequisite_graph
-                        )
-                        if existing_node and existing_node.name != prereq.name:
-                            prereq_found = True
-                            prereq_node = existing_node
-                    # Fallback to searching by prereq.name
-                    existing_node = awg_context.get_node_by_name(prereq.name)
-                    if existing_node:
-                        prereq_found = True
-                        prereq_node = existing_node
-                    # Add the prerequisite node to AWG
-                    if prereq_found:
-                        session_log.log(
-                            "INFO",
-                            f"Prerequisite {prereq.name} found in AWG",
-                        )
-                    else:
-                        awg_context.add_node(prereq_node)
-                        session_log.log(
-                            "INFO",
-                            f"Prerequisite {prereq.name} added to AWG",
-                        )
-                    # Add the prerequisite relationship to AWG
-                    prereq_rel = Relationship(
-                        id=str(uuid.uuid4()),
-                        source_node_id=c_focus.id,
-                        target_node_id=prereq_node.id,
-                        type=RelationshipType.HAS_PREREQUISITE,
-                        discovery_count_llm_inference=1,
-                        source_urls=prereq.sources,
-                        type_confidence_llm=prereq.confidence,
-                        existence_confidence_llm=prereq.confidence,
-                        last_updated_timestamp=datetime.now(),
-                    )
-                    awg_context.add_relationship(prereq_rel)
-
-                session_log.log(
-                    "INFO",
-                    f"Prerequisite research completed, found {len(prerequisites)} new prerequisites in AWG",
-                    {"new_prerequisite_count": len(prerequisites)},
-                )
-
-            except Exception as e:
-                session_log.log("WARNING", f"Prerequisite research failed: {e}")
-
-        else:
-            # Duplicate concept, skip prerequisite research
-            # In the future, we can add a research step to find the prerequisites of the duplicate concept
-            session_log.log(
-                "INFO", "Skipping prerequisite research - duplicate concept found"
-            )
+        output_state = None
+        log_nodes = ["reflect_on_research", "generate_research_result"]
+        for mode, chunk in concept_research_graph.stream(
+            initial_state, config, stream_mode=["updates", "values"]
+        ):
+            if mode == "updates":
+                node = list(chunk.keys())[0]
+                log = chunk if node in log_nodes else node
+                session_log.log("INFO", log, chunk)
+            else:
+                output_state = ConceptResearchState(**chunk)
 
         # Prepare output
         extracted_info = {
-            "concept_defined": concept_defined.model_dump(),
-            "awg_context": awg_context.model_dump(),
+            "concept_defined": output_state.concept.model_dump(),
+            "awg_context": output_state.awg_context.model_dump(),
         }
 
         session_log.log(

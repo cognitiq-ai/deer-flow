@@ -12,12 +12,12 @@ class DefinitionSearchQueryList(BaseModel):
     """Schema for generated search queries."""
 
     queries: List[str] = Field(
-        description="List of search queries for defining the <research_concept>"
-        + "Focus your queries on finding:"
-        + "- A core, fundamental explanation"
-        + "- Key characteristics and components"
-        + "- How it's used within the context of the <main_learning_goal>"
-        + "- Its relationship to other concepts already in the <prerequisite_graph>"
+        description="List of search queries for defining the <research_concept>\n"
+        "Focus your queries on finding:\n"
+        "- A core, fundamental explanation\n"
+        "- Key characteristics and components\n"
+        "- How it's used within the context of the <main_learning_goal>\n"
+        "- Its relationship to other concepts already in the <prerequisite_graph>\n"
     )
 
 
@@ -25,11 +25,11 @@ class PrerequisiteSearchQueryList(BaseModel):
     """Schema for generated search queries."""
 
     queries: List[str] = Field(
-        description="List of search queries for finding the *direct and specific* prerequisites for the <research_concept>"
-        + "Focus the queries on identifying concepts that are *immediately necessary* to understand the <research_concept> :"
-        + "- What do tutorials for this concept teach right before this concept?"
-        + "- What prererequisites are referred to in explanations of this concept?"
-        + "- Prerequisites for learning <research_concept> for <main_learning_goal>"
+        description="List of search queries for finding the *direct and specific* prerequisites for the <research_concept>\n"
+        "Focus on identifying concepts that are *immediately necessary* to understand the <research_concept> :\n"
+        "- What do tutorials for this concept teach right before this concept?\n"
+        "- What prererequisites are referred to in explanations of this concept?\n"
+        "- Prerequisites for learning <research_concept> for <main_learning_goal>\n"
     )
 
 
@@ -40,25 +40,25 @@ class DefinitionResearchReflection(BaseModel):
         description="Summary of current knowledge about the <research_concept> and its role in the <main_learning_goal> based on the cumulative research thus far"
     )
     knowledge_gap: str = Field(
-        description="The identified knowledge gaps in the concept's definition based on the cumulative research thus far:"
-        + "- Is the `current_knowledge_summary` sufficient to formulate a precise definition of the <research_concept>?"
-        + "- Is this definition clear, accurate, and comprehensive enough for a learner?"
-        + "- Are there any missing key characteristics or components?"
+        description="The identified knowledge gaps in the concept's definition based on the cumulative research thus far:\n"
+        "- Is the `current_knowledge_summary` sufficient to formulate a precise definition of the <research_concept>?\n"
+        "- Is this definition clear, accurate, and comprehensive enough for a learner?\n"
+        "- Are there any missing key characteristics or components?\n"
     )
     follow_up_queries: List[str] = Field(
-        description="List of follow-up queries to address the identified `knowledge_gap`:"
-        + "- Ensure that the queries are essential to understand the <research_concept>"
-        + "- Ensure that each query is self-contained including all context"
-        + "- Ensure these are not already in <cumulative_queries_ran>"
-        + "- List up to <n_top_queries> follow-up queries"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed"
+        description="List of follow-up queries to address the identified `knowledge_gap`:\n"
+        "- Ensure that the queries are essential to understand the <research_concept>\n"
+        "- Ensure that each query is self-contained including all relevant context\n"
+        "- Ensure these are not already in <cumulative_queries_ran>\n"
+        "- Only list up to <n_top_queries> follow-up queries\n"
+        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
     )
     urls_to_extract: List[str] = Field(
-        description="List of URLs to extract content from to address the identified `knowledge_gap`"
-        + "- Ensure these are essential to understand the <research_concept>"
-        + "- Ensure these are not already in <cumulative_urls_extracted>"
-        + "- List up to <n_top_urls> URLs to extract content from"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed"
+        description="List of URLs to extract content from to address the identified `knowledge_gap`:\n"
+        "- Ensure these are valid URLs from prior research sources\n"
+        "- Ensure these are not already in <cumulative_urls_extracted>\n"
+        "- Only list up to <n_top_urls> URLs\n"
+        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
     )
     confidence_score: float = Field(
         description="Confidence score (0-1) of the completeness of required research and fulfilment of the `knowledge_gap` for defining the <research_concept> as applicable to <main_learning_goal>",
@@ -71,31 +71,31 @@ class PrerequisiteResearchReflection(BaseModel):
     """Schema for prerequisite research reflection and gap analysis."""
 
     current_prerequisites: List[str] = Field(
-        description="Identify the *direct and specific* prerequisite concepts from this round of research"
-        "- Ensure these are *immediate* and *necessary* to understand the <research_concept>"
-        "- Ensure these are *relevant* to the <main_learning_goal>"
-        "- Check which ones are already present in <prerequisite_graph>"
-        "- Avoid indirect/transitive prerequisites, e.g. overly general concepts unless direct, specific"
+        description="Identify the *direct and specific* prerequisite concepts from this round of research\n"
+        "- Ensure these are *immediate* and *necessary* to understand the <research_concept>\n"
+        "- Ensure these are *relevant* to the <main_learning_goal>\n"
+        "- Check which ones are already present in <prerequisite_graph>\n"
+        "- Avoid indirect/transitive prerequisites, e.g. overly general concepts unless direct, specific\n"
     )
     knowledge_gap: str = Field(
-        description="Answer the following questions regarding all the prerequisites, i.e. <cumulative_prerequisites> + <current_prerequisites>:"
-        "- Are these *direct and specific* to the <research_concept>?"
-        "- Are any likely direct prerequisites to <research_concept> still missing?"
-        "- Are the prerequisites relevant to the <main_learning_goal>?"
+        description="Answer the following questions regarding all the prerequisites, i.e. <cumulative_prerequisites> + <current_prerequisites>:\n"
+        "- Are these *direct and specific* to the <research_concept>?\n"
+        "- Are any likely direct prerequisites to <research_concept> still missing?\n"
+        "- Are the prerequisites relevant to the <main_learning_goal>?\n"
     )
     follow_up_queries: List[str] = Field(
-        description="List of self-contained with complete context follow-up queries for additional research"
-        "- Ensure these are not already in <cumulative_queries_ran>."
-        "- Ensure these target more *specific* and *direct* prerequisites, or to clarify the <current_prerequisites>."
-        "- List up to <n_top_queries> follow-up queries"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed"
+        description="List of self-contained with complete context follow-up queries for additional research\n"
+        "- Ensure these are not already in <cumulative_queries_ran>\n"
+        "- Ensure these target more *specific* and *direct* prerequisites, or to clarify the <current_prerequisites>\n"
+        "- Only list up to <n_top_queries> follow-up queries\n"
+        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
     )
     urls_to_extract: List[str] = Field(
-        description="List of URLs to extract content from"
-        "- Ensure these are not already in <cumulative_urls_extracted>."
-        "- Ensure these are essential to understand the <research_concept>."
-        "- List up to <n_top_urls> URLs to extract content from"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed"
+        description="List of URLs to extract content from\n"
+        "- Ensure these are valid URLs from prior research sources\n"
+        "- Ensure these are not already in <cumulative_urls_extracted>\n"
+        "- Only list up to <n_top_urls> URLs\n"
+        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
     )
     confidence_score: float = Field(
         description="Confidence score (0-1) of the completeness of required research and fulfilment of the `knowledge_gap` for identifying **all** *direct and necessary* prerequisites and *only* those?",

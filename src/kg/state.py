@@ -42,6 +42,13 @@ class ConceptResearchState(BaseModel):
     structured_output: Optional[
         Union[ConceptDefinitionOutput, ConceptPrerequisiteOutput]
     ] = None
+    infer_relationships: Annotated[List["InferRelationshipState"], operator.add] = (
+        Field(default_factory=list)
+    )
+    relationships: Annotated[List[Relationship], operator.add] = Field(
+        default_factory=list
+    )
+    is_duplicate: bool = False
     iteration_number: int = 0
     max_iterations: int = 3
     research_mode: Optional[str] = None  # "definition" or "prerequisites"
@@ -131,7 +138,6 @@ class InferRelationshipState(BaseModel):
     """State for relationship inference."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
     concept_a: ConceptNode
     concept_b: ConceptNode
     relationship_types: Optional[List[RelationshipType]] = None
@@ -146,3 +152,4 @@ class InferRelationshipsState(BaseModel):
     relationships: Annotated[List[Relationship], operator.add] = Field(
         default_factory=list
     )
+    research_mode: Optional[str] = None  # "definition" or "prerequisites"
