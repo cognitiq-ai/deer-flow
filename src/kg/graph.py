@@ -25,6 +25,7 @@ from src.kg.schemas import (
     ConceptPrerequisiteOutput,
     DefinitionResearchReflection,
     DefinitionSearchQueryList,
+    ExistingPrerequisiteOutput,
     PrerequisiteResearchReflection,
     PrerequisiteSearchQueryList,
     make_inferred_relationship_model,
@@ -47,6 +48,7 @@ from src.prompts.kg.prompts import (
     concept_definition_instructions,
     definition_query_writer_instructions,
     definition_reflection_instructions,
+    existing_prerequisite_instructions,
     infer_relationships_instructions,
     prerequisite_identification_instructions,
     prerequisites_query_writer_instructions,
@@ -223,6 +225,132 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
         }
 
 
+def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
+    """
+    LangGraph node that searches for related concepts in PKG
+    using the concept definition embedding.
+
+    Returns:
+        State update with `related_concepts`.
+    """
+    # Generate embedding for definition and search PKG for related concepts
+    try:
+        embeddings = get_embedding_model()
+        definition_embedding = embeddings.embed_query(
+            state.structured_output.definition
+        )
+
+        pkg_interface = PKGInterface()
+        relevant_subgraph = pkg_interface.vector_search_definition(
+            definition_embedding,
+            limit=3,
+            similarity_threshold=0.9,
+        )
+
+        # Get related concepts from PKG
+        related_concepts = [
+            InferRelationshipState(concept_a=state.concept, concept_b=concept)
+            for concept in list(relevant_subgraph.nodes.values())
+        ]
+
+        return {
+            "related_concepts": related_concepts,
+        }
+
+    except Exception as e:
+        return {
+            "related_concepts": [],
+        }
+
+
+def get_existing_prerequisites(
+    state: ConceptResearchState, config: RunnableConfig
+) -> dict:
+    """
+    LangGraph node that finds prerequisites already existing in the AWG.
+
+    Returns:
+        State update with existing prerequisites
+    """
+    # Get the config
+    configurable = Configuration.from_runnable_config(config)
+
+    # Initialize LLM
+    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
+    llm = get_llm_by_type(llm_type)
+
+    candidates = state.awg_context.get_target_candidates(
+        state.concept, RelationshipType.HAS_PREREQUISITE
+    )
+    candidate_concepts_str = (
+        yaml.dump(state.awg_context.get_definitions(candidates), sort_keys=False)
+        if candidates
+        else ""
+    )
+    prerequisite_graph = state.awg_context.to_incident_encoding(
+        RelationshipType.HAS_PREREQUISITE
+    )
+
+    # Format the prerequisites prompt
+    formatted_prompt = existing_prerequisite_instructions.format(
+        research_concept=get_research_concept(state.concept, state.goal_context),
+        candidate_concepts_str=candidate_concepts_str,
+        graph_str=prerequisite_graph,
+    )
+    messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
+    try:
+        if len(candidates) == 0:
+            raise Exception("No candidate concepts found")
+
+        # Generate prerequisites with retry
+        existing_prerequisites = get_structured_output_with_retry(
+            llm, ExistingPrerequisiteOutput, messages
+        )
+        # Add to AWG
+        awg_context = state.awg_context.deep_copy()
+        for prereq in existing_prerequisites.existing_prerequisites:
+            existing_node = state.awg_context.get_node_by_name(prereq.name)
+            if (
+                existing_node
+                and state.concept.name != prereq.name
+                and prereq.confidence >= configurable.reflection_confidence
+            ):
+                # Add the prerequisite relationship to AWG
+                prereq_rel = Relationship(
+                    id=str(uuid.uuid4()),
+                    source_node_id=state.concept.id,
+                    target_node_id=existing_node.id,
+                    type=RelationshipType.HAS_PREREQUISITE,
+                    discovery_count_llm_inference=1,
+                    source_urls=prereq.sources,
+                    type_confidence_llm=prereq.confidence,
+                    existence_confidence_llm=prereq.confidence,
+                    last_updated_timestamp=datetime.now(),
+                )
+                awg_context.add_relationship(prereq_rel)
+
+        return {
+            "messages": [
+                HumanMessage(content=formatted_prompt),
+                AIMessage(
+                    content=f"<existing_prerequisites>\n```\n{yaml.dump(existing_prerequisites.model_dump(), sort_keys=False)}\n```\n</existing_prerequisites>"
+                ),
+            ],
+            "existing_prerequisites": existing_prerequisites,
+            "awg_context": awg_context,
+            "research_mode": "prerequisites",
+        }
+    except Exception as e:
+        # Return empty prerequisites on error
+        return {
+            "messages": [
+                HumanMessage(content=formatted_prompt),
+                AIMessage(content=f"Error: {e}"),
+            ],
+            "research_mode": "prerequisites",
+        }
+
+
 def reflect_on_research(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """
     LangGraph node that reflects on research progress and identifies knowledge gaps.
@@ -335,14 +463,19 @@ def _concept_prerequisite_reflection(
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
 
+    existing_prerequisites = [
+        state.awg_context.get_node(rel.target_node_id).name
+        for rel in state.awg_context.get_relationships_by_source(
+            state.concept.id, RelationshipType.HAS_PREREQUISITE
+        )
+    ]
+
     # Format the reflection prompt
     formatted_prompt = prerequisites_reflection_instructions.format(
         research_concept=get_research_concept(state.concept, state.goal_context),
         top_queries=configurable.max_search_queries,
         top_urls=configurable.max_extract_urls,
-        query_list_str="\n".join(state.query_list),
-        url_list_str="\n".join(state.url_list),
-        prerequisite_list_str="\n".join(state.prerequisite_list),
+        existing_prerequisites_str="\n".join(existing_prerequisites),
     )
     messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
 
@@ -371,7 +504,7 @@ def _concept_prerequisite_reflection(
             ],
             "iteration_number": current_iteration,
             "reflection": reflection_result,
-            "prerequisite_list": reflection_result.current_prerequisites,
+            "new_prerequisites": reflection_result.new_prerequisites,
         }
 
     except Exception as e:
@@ -384,7 +517,6 @@ def _concept_prerequisite_reflection(
                 ),
             ],
             "iteration_number": current_iteration,
-            "reflection": None,
         }
 
 
@@ -577,51 +709,54 @@ def _generate_prerequisites(
         }
 
 
-def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
+def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """
-    LangGraph node that searches for related concepts in PKG
-    using the concept definition embedding.
+    LangGraph node that merges prerequisites into the AWG.
+
+    Args:
+        state: Current state with prerequisites
 
     Returns:
-        State update with `related_concepts`.
+        State update with `awg_context`.
     """
-    # Guard: only proceed for definition mode with a valid definition
-    if (
-        (state.research_mode or "definition") != "definition"
-        or not state.structured_output
-        or not getattr(state.structured_output, "definition", None)
-    ):
-        return {}
-
-    # Generate embedding for definition and search PKG for related concepts
-    try:
-        embeddings = get_embedding_model()
-        definition_embedding = embeddings.embed_query(
-            state.structured_output.definition
+    # Get the config
+    configurable = Configuration.from_runnable_config(config)
+    awg_context = state.awg_context.deep_copy()
+    existing = [
+        x.name.lower() for x in state.existing_prerequisites.existing_prerequisites
+    ]
+    for prereq in state.structured_output.new_prerequisites:
+        if (
+            prereq.confidence < configurable.reflection_confidence
+            or prereq.name.lower() in existing
+        ):
+            continue
+        # Create default prerequisite node
+        prereq_node = ConceptNode(
+            id=str(uuid.uuid4()),
+            name=prereq.name,
+            definition=prereq.description,
+            last_updated_timestamp=datetime.now(),
         )
-
-        pkg_interface = PKGInterface()
-        relevant_subgraph = pkg_interface.vector_search_definition(
-            definition_embedding,
-            limit=3,
-            similarity_threshold=0.8,
+        # Add the prerequisite node to AWG
+        awg_context.add_node(prereq_node)
+        # Add the prerequisite relationship to AWG
+        prereq_rel = Relationship(
+            id=str(uuid.uuid4()),
+            source_node_id=state.concept.id,
+            target_node_id=prereq_node.id,
+            type=RelationshipType.HAS_PREREQUISITE,
+            discovery_count_llm_inference=1,
+            source_urls=prereq.sources,
+            type_confidence_llm=prereq.confidence,
+            existence_confidence_llm=prereq.confidence,
+            last_updated_timestamp=datetime.now(),
         )
+        awg_context.add_relationship(prereq_rel)
 
-        # Infer relationships with the related concepts
-        existing_concepts = list(relevant_subgraph.nodes.values())
-        infer_relationships = [
-            InferRelationshipState(concept_a=state.concept, concept_b=concept)
-            for concept in existing_concepts
-        ]
-
-        return {
-            "infer_relationships": infer_relationships,
-        }
-
-    except Exception as e:
-        return {
-            "infer_relationships": [],
-        }
+    return {
+        "awg_context": awg_context,
+    }
 
 
 def infer_relationship(state: InferRelationshipState, config: RunnableConfig) -> dict:
@@ -719,28 +854,26 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
 
 
 def route_after_related(
-    state: InferRelationshipsState, config: RunnableConfig
+    state: ConceptResearchState, config: RunnableConfig
 ) -> List[Send]:
     """
     LangGraph routing function for next step in relationship inference.
     """
 
-    if len(state.infer_relationships) > 0:
+    if len(state.related_concepts) > 0:
         return [
             Send(
                 "infer_relationship",
                 InferRelationshipState(
-                    concept_a=rels.concept_a,
-                    concept_b=rels.concept_b,
-                    relationship_types=rels.relationship_types,
+                    concept_a=rel.concept_a,
+                    concept_b=rel.concept_b,
+                    relationship_types=rel.relationship_types,
                 ),
             )
-            for rels in state.infer_relationships
+            for rel in state.related_concepts
         ]
-    elif state.research_mode == "definition":
-        return "merge_related_concepts"
     else:
-        return END
+        return "merge_related_concepts"
 
 
 def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
@@ -767,7 +900,6 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         last_updated_timestamp=datetime.now(),
     )
     # Ensure the defined concept exists in AWG
-    awg_context = state.awg_context
     awg_context.add_node(concept_defined)
 
     duplicate = None
@@ -779,7 +911,7 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         )
         concept = [
             rel.concept_b
-            for rel in state.infer_relationships
+            for rel in state.related_concepts
             if rel.concept_b.id == concept_id
         ][0]
         awg_context.add_node(concept)
@@ -846,56 +978,6 @@ def research_prerequisites_or_finish(
         return END
 
 
-def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> dict:
-    """
-    LangGraph node that merges prerequisites into the AWG.
-    """
-    prerequisites = state.structured_output.prerequisites
-    awg_context = state.awg_context.deep_copy()
-    for prereq in prerequisites:
-        # Create default prerequisite node
-        prereq_found = False
-        prereq_node = ConceptNode(
-            id=str(uuid.uuid4()),
-            name=prereq.name,
-            definition=prereq.description,
-            last_updated_timestamp=datetime.now(),
-        )
-        # Try to find by node_in_prerequisite_graph first
-        if prereq.node_in_prerequisite_graph:
-            existing_node = awg_context.get_node_by_name(
-                prereq.node_in_prerequisite_graph
-            )
-            if existing_node and existing_node.name != prereq.name:
-                prereq_found = True
-                prereq_node = existing_node
-        # Fallback to searching by prereq.name
-        existing_node = awg_context.get_node_by_name(prereq.name)
-        if existing_node:
-            prereq_found = True
-            prereq_node = existing_node
-        # Add the prerequisite node to AWG
-        if not prereq_found:
-            awg_context.add_node(prereq_node)
-        # Add the prerequisite relationship to AWG
-        prereq_rel = Relationship(
-            id=str(uuid.uuid4()),
-            source_node_id=state.concept.id,
-            target_node_id=prereq_node.id,
-            type=RelationshipType.HAS_PREREQUISITE,
-            discovery_count_llm_inference=1,
-            source_urls=prereq.sources,
-            type_confidence_llm=prereq.confidence,
-            existence_confidence_llm=prereq.confidence,
-            last_updated_timestamp=datetime.now(),
-        )
-        awg_context.add_relationship(prereq_rel)
-
-    return {
-        "awg_context": awg_context,
-    }
-
-
 # Build the graph
 def create_concept_research_graph():
     """
@@ -918,6 +1000,7 @@ def create_concept_research_graph():
     builder.add_node("get_related_concepts", get_related_concepts)
     builder.add_node("infer_relationship", infer_relationship)
     builder.add_node("merge_related_concepts", merge_related_concepts)
+    builder.add_node("get_existing_prerequisites", get_existing_prerequisites)
     builder.add_node("merge_prerequisites", merge_prerequisites)
     # Add edges
     builder.add_edge(START, "generate_queries")
@@ -942,11 +1025,8 @@ def create_concept_research_graph():
         ["infer_relationship", "merge_related_concepts"],
     )
     builder.add_edge("infer_relationship", "merge_related_concepts")
-    builder.add_conditional_edges(
-        "merge_related_concepts",
-        research_prerequisites_or_finish,
-        ["reflect_on_research", END],
-    )
+    builder.add_edge("merge_related_concepts", "get_existing_prerequisites")
+    builder.add_edge("get_existing_prerequisites", "reflect_on_research")
     builder.add_edge("merge_prerequisites", END)
 
     return builder.compile()
@@ -954,6 +1034,25 @@ def create_concept_research_graph():
 
 # Create the compiled graph - single instance
 concept_research_graph = create_concept_research_graph()
+
+
+def send_to_infer_relationship(
+    state: InferRelationshipsState, config: RunnableConfig
+) -> List[Send]:
+    """
+    LangGraph routing function that determines next step after merging related concepts.
+    """
+    return [
+        Send(
+            "infer_relationship",
+            InferRelationshipState(
+                concept_a=rel.concept_a,
+                concept_b=rel.concept_b,
+                relationship_types=rel.relationship_types,
+            ),
+        )
+        for rel in state.infer_relationships
+    ]
 
 
 def create_infer_relationship_graph():
@@ -966,7 +1065,9 @@ def create_infer_relationship_graph():
     builder.add_node("infer_relationship", infer_relationship)
 
     # Add edges
-    builder.add_conditional_edges(START, route_after_related, ["infer_relationship"])
+    builder.add_conditional_edges(
+        START, send_to_infer_relationship, ["infer_relationship"]
+    )
     builder.add_edge("infer_relationship", END)
 
     return builder.compile()

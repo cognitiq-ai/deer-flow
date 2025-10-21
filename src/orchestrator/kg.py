@@ -171,14 +171,15 @@ async def inner_loop(
         session_log.log("INFO", f"Starting research process for {c_focus.name}")
 
         output_state = None
-        log_nodes = ["reflect_on_research", "generate_research_result"]
         for mode, chunk in concept_research_graph.stream(
             initial_state, config, stream_mode=["updates", "values"]
         ):
             if mode == "updates":
                 node = list(chunk.keys())[0]
-                log = chunk if node in log_nodes else node
-                session_log.log("INFO", log, chunk)
+                messages = chunk.get("messages", [])
+                session_log.log("INFO", node)
+                for message in messages:
+                    session_log.log("INFO", message.pretty_repr(html=True))
             else:
                 output_state = ConceptResearchState(**chunk)
 

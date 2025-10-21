@@ -70,35 +70,36 @@ class DefinitionResearchReflection(BaseModel):
 class PrerequisiteResearchReflection(BaseModel):
     """Schema for prerequisite research reflection and gap analysis."""
 
-    current_prerequisites: List[str] = Field(
-        description="Identify the *direct and specific* prerequisite concepts from this round of research\n"
-        "- Ensure these are *immediate* and *necessary* to understand the <research_concept>\n"
-        "- Ensure these are *relevant* to the <main_learning_goal>\n"
-        "- Check which ones are already present in <prerequisite_graph>\n"
-        "- Avoid indirect/transitive prerequisites, e.g. overly general concepts unless direct, specific\n"
+    new_prerequisites: List[str] = Field(
+        description="The set of **new** candidate prerequisite concepts identified based on the cumulative research thus far with each concept being:\n"
+        "- Distinct, self-contained unit of study that can be mastered and assessed independently\n"
+        "- Directionally unambiguous, i.e. <research_concept> is not a prerequisite of this new prerequisite concept\n"
+        "- Directly and specifically relates as a prerequisite for the <research_concept>\n"
+        "- Not already identified in <existing_prerequisites>\n"
+        "- Relevant to the <main_learning_goal>\n"
     )
     knowledge_gap: str = Field(
-        description="Answer the following questions regarding all the prerequisites, i.e. <cumulative_prerequisites> + <current_prerequisites>:\n"
-        "- Are these *direct and specific* to the <research_concept>?\n"
-        "- Are any likely direct prerequisites to <research_concept> still missing?\n"
-        "- Are the prerequisites relevant to the <main_learning_goal>?\n"
+        description="The knowledge gaps in the current state of research to understand and refine the newly identified candidate prerequisites (`new_prerequisites`) including but not limited to:\n"
+        "- How are these *directly and specifically* related to the <research_concept>?\n"
+        "- Are these prerequisites sufficiently distinct, self-contained learning units that can be mastered and assessed independently?\n"
+        "- What are other potentially relevant prerequisites to <research_concept> that are still missing?\n"
+        "- Are the prerequisites *relevant* to the <main_learning_goal>?\n"
     )
     follow_up_queries: List[str] = Field(
-        description="List of self-contained with complete context follow-up queries for additional research\n"
-        "- Ensure these are not already in <cumulative_queries_ran>\n"
-        "- Ensure these target more *specific* and *direct* prerequisites, or to clarify the <current_prerequisites>\n"
+        description="List of follow-up queries to address the identified `knowledge_gap`:\n"
+        "- Ensure these are essential to understand the <research_concept>\n"
+        "- Ensure each query is self-contained including all relevant context\n"
         "- Only list up to <n_top_queries> follow-up queries\n"
         "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
     )
     urls_to_extract: List[str] = Field(
-        description="List of URLs to extract content from\n"
+        description="List of URLs for content extraction to address the identified `knowledge_gap`:\n"
         "- Ensure these are valid URLs from prior research sources\n"
-        "- Ensure these are not already in <cumulative_urls_extracted>\n"
         "- Only list up to <n_top_urls> URLs\n"
         "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
     )
     confidence_score: float = Field(
-        description="Confidence score (0-1) of the completeness of required research and fulfilment of the `knowledge_gap` for identifying **all** *direct and necessary* prerequisites and *only* those?",
+        description="Confidence score (0-1) of the completeness of required research for confirming the identified candidate prerequisites of the <research_concept>",
         ge=0.0,
         le=1.0,
     )
@@ -179,10 +180,10 @@ def make_inferred_relationship_model(
 
 
 class ConceptPrerequisite(BaseModel):
-    """Structured output schema for a single **direct** prerequisite."""
+    """Structured output schema for a single *direct* prerequisite."""
 
     name: str = Field(
-        description="A clear and concise name of the identified prerequisite of <research_concept>"
+        description="A clear and concise name of the identified prerequisite"
     )
     description: str = Field(
         description="A brief explanation of *why* this is a direct prerequisite of <research_concept> in the context of <main_learning_topic>"
@@ -190,23 +191,39 @@ class ConceptPrerequisite(BaseModel):
     confidence: float = Field(
         ge=0.0,
         le=1.0,
-        description="The confidence that this is a true and essential direct prerequisite of <research_concept>",
+        description="The confidence that this concept is a *direct prerequisite* of <research_concept>. Be careful about the direction of the relationship here!",
     )
     sources: List[str] = Field(
         default_factory=list,
         description="URLs or identifiers of the research sources that support identifying this prerequisite",
-    )
-    node_in_prerequisite_graph: Optional[str] = Field(
-        description="The name of the node (if any) that is already present in the <prerequisite_graph> that this prerequisite is a duplicate of, else None/null"
-        "   - Must match an existing node in the <prerequisite_graph>"
     )
 
 
 class ConceptPrerequisiteOutput(BaseModel):
     """Structured output schema for a list of prerequisites."""
 
-    prerequisites: List[ConceptPrerequisite] = Field(
-        description="List of the identified prerequisites for the defined <research_concept>"
-        "   - May contain nodes already in <prerequisite_graph> if identified as direct prerequisites of the <research_concept>"
-        "   - Must be direct and specific prerequisites of <research_concept>"
+    new_prerequisites: List[ConceptPrerequisite] = Field(
+        description="List of the identified prerequisites for the <research_concept>"
+        "- Must strictly adhere to the <definitions> of prerequisite\n"
+        "- Must be *immediate* and *necessary* to understand the <research_concept>\n"
+        "- Must be *distinct, self-contained* units of study that can be mastered and assessed independently\n"
+        "- Must have unambiguous directionality, i.e. <research_concept> **cannot be a prerequisite** of this concept\n"
+        "- Must avoid indirect/transitive relationships, e.g. overly general concepts unless direct, specific to <research_concept>\n"
+        "- Must be *relevant* to the <main_learning_goal>\n"
+        "Return an empty list if no new prerequisites can be identified"
+    )
+
+
+class ExistingPrerequisiteOutput(BaseModel):
+    """Structured output schema for a list of existing prerequisites."""
+
+    existing_prerequisites: List[ConceptPrerequisite] = Field(
+        description="List of the existing prerequisites of <research_concept>:\n"
+        "- Must strictly adhere to the <definitions> of prerequisite\n"
+        "- Must be part of the <candidate_concepts>\n"
+        "- Must be *immediate* and *necessary* to understand the <research_concept>\n"
+        "- Must have unambiguous directionality, i.e. <research_concept> **cannot be a prerequisite** of this concept\n"
+        "- Must avoid indirect/transitive relationships, e.g. overly general concepts unless direct, specific to <research_concept>\n"
+        "- Must be *relevant* to the <main_learning_goal>\n"
+        "Return an empty list if no existing prerequisites can be identified"
     )

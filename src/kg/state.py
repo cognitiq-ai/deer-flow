@@ -20,6 +20,7 @@ from src.kg.schemas import (
     ConceptDefinitionOutput,
     ConceptPrerequisiteOutput,
     DefinitionResearchReflection,
+    ExistingPrerequisiteOutput,
     PrerequisiteResearchReflection,
 )
 from src.kg.utils import get_current_date, update_messages
@@ -42,8 +43,8 @@ class ConceptResearchState(BaseModel):
     structured_output: Optional[
         Union[ConceptDefinitionOutput, ConceptPrerequisiteOutput]
     ] = None
-    infer_relationships: Annotated[List["InferRelationshipState"], operator.add] = (
-        Field(default_factory=list)
+    related_concepts: Annotated[List["InferRelationshipState"], operator.add] = Field(
+        default_factory=list
     )
     relationships: Annotated[List[Relationship], operator.add] = Field(
         default_factory=list
@@ -51,10 +52,11 @@ class ConceptResearchState(BaseModel):
     is_duplicate: bool = False
     iteration_number: int = 0
     max_iterations: int = 3
-    research_mode: Optional[str] = None  # "definition" or "prerequisites"
+    research_mode: str = "definition"  # "definition" or "prerequisites"
+    existing_prerequisites: Optional[ExistingPrerequisiteOutput] = None
+    new_prerequisites: Annotated[List[str], operator.add] = Field(default_factory=list)
     query_list: Annotated[List[str], operator.add] = Field(default_factory=list)
     url_list: Annotated[List[str], operator.add] = Field(default_factory=list)
-    prerequisite_list: Annotated[List[str], operator.add] = Field(default_factory=list)
     research_results: Annotated[List[ResearchOutput], operator.add] = Field(
         default_factory=list
     )

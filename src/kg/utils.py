@@ -28,10 +28,10 @@ def get_research_concept(concept: ConceptNode, goal_context: str) -> str:
     # Create the "concept" in "topic" to achieve "goal" string
     if concept.name.lower() != goal_context.lower():
         concept_definition = concept.definition or ""
-        return f"{concept.name}: {concept_definition}"
+        return f"**{concept.name}:** {concept_definition}"
     else:
         if concept.topic:
-            return f"{concept.topic} to {goal_context}"
+            return f"**{concept.topic}** to {goal_context}"
         else:
             return goal_context
 

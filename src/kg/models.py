@@ -394,16 +394,24 @@ class AgentWorkingGraph(BaseModel):
         """Get a relationship from the working graph by ID."""
         return self.relationships.get(relationship_id)
 
-    def get_relationships_by_source(self, source_node_id: str) -> List[Relationship]:
+    def get_relationships_by_source(
+        self, source_node_id: str, rel_type: Optional[RelationshipType] = None
+    ) -> List[Relationship]:
         """Get all relationships where the given node is the source."""
         return [
-            r for r in self.relationships.values() if r.source_node_id == source_node_id
+            r
+            for r in self.relationships.values()
+            if r.source_node_id == source_node_id and r.type == (rel_type or r.type)
         ]
 
-    def get_relationships_by_target(self, target_node_id: str) -> List[Relationship]:
+    def get_relationships_by_target(
+        self, target_node_id: str, rel_type: Optional[RelationshipType] = None
+    ) -> List[Relationship]:
         """Get all relationships where the given node is the target."""
         return [
-            r for r in self.relationships.values() if r.target_node_id == target_node_id
+            r
+            for r in self.relationships.values()
+            if r.target_node_id == target_node_id and r.type == (rel_type or r.type)
         ]
 
     def delete_node(self, node_id: str) -> None:
@@ -475,15 +483,15 @@ class AgentWorkingGraph(BaseModel):
     ) -> nx.DiGraph:
         """Convert the working graph to a NetworkX directed graph."""
         G = nx.DiGraph()
-
+        nodes = self.nodes
         if rel_type is not None:
             filtered_edges = [
                 edge for edge in self.relationships.values() if edge.type == rel_type
             ]
-            nodes = [edge.source_node_id for edge in filtered_edges] + [
-                edge.target_node_id for edge in filtered_edges
-            ]
-            nodes = {node: self.nodes[node] for node in set(nodes)}
+            # nodes = [edge.source_node_id for edge in filtered_edges] + [
+            #     edge.target_node_id for edge in filtered_edges
+            # ]
+            # nodes = {node: self.nodes[node] for node in set(nodes)}
             # Convert list back to dict for consistent iteration
             edges = {edge.id: edge for edge in filtered_edges}
         else:
@@ -533,12 +541,10 @@ class AgentWorkingGraph(BaseModel):
             Gravis Figure object for interactive visualization
         """
         if not VISUALIZATION_AVAILABLE:
-            print("Gravis not available for visualization")
-            return None
+            raise Exception("Gravis not available for visualization")
 
         if not self.nodes:
-            print("No nodes to display")
-            return None
+            raise Exception("No nodes to display")
 
         # Create a clean NetworkX graph for Gravis
         G = self.to_networkx_graph()
@@ -739,13 +745,11 @@ class AgentWorkingGraph(BaseModel):
     ) -> None:
         """Show the interactive Gravis graph in the browser."""
         if not VISUALIZATION_AVAILABLE:
-            print("Gravis not available for interactive visualization")
-            return
+            raise Exception("Gravis not available for interactive visualization")
 
         fig = self.create_visualization(title)
         if fig:
             fig.display()
-            print("🌐 Interactive graph opened in browser")
 
     def save_interactive_graph(
         self,
@@ -754,13 +758,12 @@ class AgentWorkingGraph(BaseModel):
     ) -> None:
         """Save the interactive Gravis graph to an HTML file."""
         if not VISUALIZATION_AVAILABLE:
-            print("Gravis not available for saving interactive visualization")
+            raise Exception("Gravis not available for saving interactive visualization")
             return
 
         fig = self.create_visualization(title)
         if fig:
             fig.export_html(filename)
-            print(f"💾 Interactive graph saved to {filename}")
 
     def find_prerequisites_path(self, goal_node_id: str) -> List[str]:
         """
@@ -1223,6 +1226,21 @@ class AgentWorkingGraph(BaseModel):
 
         return removed_rel_ids
 
+    def get_target_candidates(
+        self, node: ConceptNode, rel_type: RelationshipType
+    ) -> List[ConceptNode]:
+        """
+        Return a list of nodes that are not ancestors or successors of the given node,
+        for the given relationship type, i.e. have a relationship from the given node.
+
+        Args:
+            node: The node to check
+            rel_type: The type of relationship to check
+        """
+        G = self.to_networkx_graph(rel_type=rel_type)
+        forbidden = nx.ancestors(G, node.id) | {node.id} | set(G.successors(node.id))
+        return [self.get_node(j) for j in G.nodes if j not in forbidden]
+
     def dfs_postorder(self, tie_break_key=lambda x: str(x)) -> List[str]:
         """
         Return a postorder-like ordering that:
@@ -1297,24 +1315,32 @@ class AgentWorkingGraph(BaseModel):
 
         return list(map(lambda x: self.get_node(x).id, post))
 
-    def get_definitions(self) -> Dict[str, str]:
+    def get_definitions(
+        self, nodes: Optional[List[ConceptNode]] = None
+    ) -> Dict[str, str]:
         """
-        Get the definitions of all concepts
+        Get the definitions of the given nodes if provided else all nodes.
         """
         definitions = {}
-        for node in self.nodes.values():
+        check_nodes = nodes if nodes is not None else self.nodes.values()
+        for node in check_nodes:
+            name = f"**{node.name}**"
             if node.definition:
-                definitions[node.name] = node.definition
+                definitions[name] = node.definition
         return definitions
 
-    def to_incident_encoding(self, relationship_type: RelationshipType) -> str:
+    def to_incident_encoding(
+        self,
+        relationship_type: RelationshipType,
+        nodes: Optional[List[ConceptNode]] = None,
+    ) -> str:
         """
         Convert the working graph to text-based incident encoding representation
         for a specific relationship type.
 
         Args:
             relationship_type: The type of relationship to encode
-
+            nodes: Optional list of nodes to encode
         Returns:
             String representation in incident encoding format
         """
@@ -1326,7 +1352,7 @@ class AgentWorkingGraph(BaseModel):
 
         # First, list all nodes with numbers
         lines.append("G describes a graph among nodes:")
-        node_list = list(self.nodes.values())
+        node_list = nodes or list(self.nodes.values())
         for i, node in enumerate(node_list, 1):
             lines.append(f"{i}. {node.name}")
 
@@ -1339,8 +1365,12 @@ class AgentWorkingGraph(BaseModel):
         source_to_targets = {}
         for rel in self.relationships.values():
             if rel.type == relationship_type:
-                source_node = self.get_node(rel.source_node_id)
-                target_node = self.get_node(rel.target_node_id)
+                source_node = next(
+                    (node for node in node_list if node.id == rel.source_node_id), None
+                )
+                target_node = next(
+                    (node for node in node_list if node.id == rel.target_node_id), None
+                )
 
                 if source_node and target_node:
                     if source_node.name not in source_to_targets:
