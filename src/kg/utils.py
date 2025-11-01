@@ -209,20 +209,6 @@ def should_continue_research(
     Returns:
         True if research should continue, False otherwise
     """
-    # Stop if we've reached the maximum number of loops
-    if current_loops >= max_loops:
-        return False
-
-    # Stop if confidence is above threshold
-    confidence = reflection_result.confidence_score
-    if confidence >= confidence_threshold:
-        return False
-
-    # Continue if there are follow-up queries
-    follow_up_queries = reflection_result.follow_up_queries
-    extracted_urls = reflection_result.urls_to_extract
-    if follow_up_queries or extracted_urls:
-        return True
 
     return False
 

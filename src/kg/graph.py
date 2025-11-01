@@ -21,13 +21,16 @@ from src.kg.models import (
     ResearchSource,
 )
 from src.kg.schemas import (
-    ConceptDefinitionOutput,
+    ActionPlan,
     ConceptPrerequisiteOutput,
-    DefinitionResearchReflection,
+    ConceptProfileEvaluation,
+    ConceptProfileOutput,
     DefinitionSearchQueryList,
     ExistingPrerequisiteOutput,
+    KnowledgeGap,
+    PrerequisiteActionPlan,
+    PrerequisiteEvaluation,
     PrerequisiteResearchReflection,
-    PrerequisiteSearchQueryList,
     make_inferred_relationship_model,
 )
 from src.kg.state import (
@@ -40,18 +43,19 @@ from src.kg.state import (
 from src.kg.utils import (
     get_research_concept,
     get_structured_output_with_retry,
-    should_continue_research,
     update_messages,
 )
 from src.llms.llm import get_embedding_model, get_llm_by_type
 from src.prompts.kg.prompts import (
-    concept_definition_instructions,
-    definition_query_writer_instructions,
-    definition_reflection_instructions,
+    concept_profile_action_instructions,
+    concept_profile_evaluation_instructions,
+    concept_profile_output_instructions,
+    concept_profile_query_instructions,
     existing_prerequisite_instructions,
     infer_relationships_instructions,
     prerequisite_identification_instructions,
-    prerequisites_query_writer_instructions,
+    prerequisites_action_plan_instructions,
+    prerequisites_evaluation_instructions,
     prerequisites_reflection_instructions,
 )
 from src.tools.search import get_web_search_tool
@@ -61,51 +65,22 @@ from src.tools.search import get_web_search_tool
 def generate_queries(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """
     LangGraph node that generates search queries based on the research request.
-
-    Uses stage-specific prompts for concept definition vs prerequisites research.
-
-    Args:
-        state: Current graph state containing research parameters
-
-    Returns:
-        Dictionary with state update including generated queries
     """
-
     # Get the config
     configurable = Configuration.from_runnable_config(config)
 
     # Initialize LLM
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
-
-    # Format the prompt based on research mode
-    research_mode = state.research_mode or "definition"
     concept = state.concept
 
-    if research_mode == "prerequisites":
-        formatted_prompt = prerequisites_query_writer_instructions.format(
-            research_concept=get_research_concept(concept, state.goal_context),
-            top_queries=configurable.max_search_queries,
-        )
-        messages = update_messages(
-            state.messages, [HumanMessage(content=formatted_prompt)]
-        )
-        # Generate the search queries with retry
-        result = get_structured_output_with_retry(
-            llm, PrerequisiteSearchQueryList, messages
-        )
-    else:  # definition mode
-        formatted_prompt = definition_query_writer_instructions.format(
-            research_concept=get_research_concept(concept, state.goal_context),
-            top_queries=configurable.max_search_queries,
-        )
-        messages = update_messages(
-            state.messages, [HumanMessage(content=formatted_prompt)]
-        )
-        # Generate the search queries with retry
-        result = get_structured_output_with_retry(
-            llm, DefinitionSearchQueryList, messages
-        )
+    formatted_prompt = concept_profile_query_instructions.format(
+        research_concept=get_research_concept(concept, state.goal_context),
+        top_queries=configurable.max_search_queries,
+    )
+    messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
+    # Generate the search queries with retry
+    result = get_structured_output_with_retry(llm, DefinitionSearchQueryList, messages)
     # Get the queries that are not already in the query list
     queries = [query for query in result.queries if query not in state.query_list][
         : configurable.max_search_queries
@@ -127,14 +102,7 @@ def continue_to_web_search(
 ) -> List[Send]:
     """
     LangGraph routing function that dispatches search queries to web search nodes.
-
-    Args:
-        state: Current state with generated queries
-
-    Returns:
-        List of Send objects for parallel web search execution
     """
-
     return [
         Send("web_search", WebSearchState(query=query)) for query in state.query_list
     ]
@@ -143,14 +111,7 @@ def continue_to_web_search(
 def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
     """
     LangGraph node that performs web search for a single query.
-
-    Args:
-        state: State containing the search query
-
-    Returns:
-        State update with search results
     """
-
     # Get the config
     configurable = Configuration.from_runnable_config(config)
 
@@ -160,7 +121,7 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
 
     try:
         # Perform the search
-        search_results = search_tool.invoke(query)
+        search_results = search_tool.invoke(query.replace('"', ""))
         if isinstance(search_results, str):
             search_results = json.loads(search_results)
 
@@ -171,6 +132,7 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
                     url=result["url"], title=result["title"], snippet=result["content"]
                 )
                 for result in search_results
+                if result["type"] == "page"
             ],
         )
         return {
@@ -195,12 +157,6 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
 def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dict:
     """
     LangGraph node that extracts content from web pages.
-
-    Args:
-        state: State containing URLs to extract
-
-    Returns:
-        State update with extracted content
     """
     try:
         # Extract content from URL
@@ -228,16 +184,12 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
 def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """
     LangGraph node that searches for related concepts in PKG
-    using the concept definition embedding.
-
-    Returns:
-        State update with `related_concepts`.
     """
     # Generate embedding for definition and search PKG for related concepts
     try:
         embeddings = get_embedding_model()
         definition_embedding = embeddings.embed_query(
-            state.structured_output.definition
+            state.profile_output.conceptualization.definition
         )
 
         pkg_interface = PKGInterface()
@@ -268,9 +220,6 @@ def get_existing_prerequisites(
 ) -> dict:
     """
     LangGraph node that finds prerequisites already existing in the AWG.
-
-    Returns:
-        State update with existing prerequisites
     """
     # Get the config
     configurable = Configuration.from_runnable_config(config)
@@ -354,19 +303,8 @@ def get_existing_prerequisites(
 def reflect_on_research(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """
     LangGraph node that reflects on research progress and identifies knowledge gaps.
-
-    Uses stage-specific prompts for concept definition vs prerequisites research.
-
-    Args:
-        state: Current overall state with research data
-
-    Returns:
-        State update with reflection results
     """
-    # Format the reflection prompt based on research mode
-    research_mode = state.research_mode or "definition"
-
-    if research_mode == "prerequisites":
+    if state.research_mode == "prerequisites":
         return _concept_prerequisite_reflection(state, config)
     else:  # definition mode
         return _concept_definition_reflection(state, config)
@@ -377,10 +315,6 @@ def _concept_definition_reflection(
 ) -> dict:
     """
     LangGraph node that reflects on definition research.
-
-    Args:
-        state: Current state with reflection results
-
     """
     # Get the config
     configurable = Configuration.from_runnable_config(config)
@@ -391,55 +325,75 @@ def _concept_definition_reflection(
     # Initialize LLM
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
-
-    # Format the reflection prompt
-    formatted_prompt = definition_reflection_instructions.format(
-        research_concept=get_research_concept(state.concept, state.goal_context),
-        top_queries=configurable.max_search_queries,
-        top_urls=configurable.max_extract_urls,
-        query_list_str="\n".join(state.query_list),
-        url_list_str="\n".join(state.url_list),
-    )
-    messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
-
     try:
-        # Generate reflection with retry
-        reflection_result = get_structured_output_with_retry(
-            llm, DefinitionResearchReflection, messages
+        # Step 1: Generate concept profile output
+        knowledge_gap = (
+            state.profile_evaluation.knowledge_gap.description
+            if state.profile_evaluation
+            else "Not yet identified"
         )
-        reflection_result.follow_up_queries = [
-            query
-            for query in reflection_result.follow_up_queries
-            if query not in state.query_list
+        formatted_gen = concept_profile_output_instructions.format(
+            research_concept=get_research_concept(state.concept, state.goal_context),
+            knowledge_gap=knowledge_gap,
+        )
+        messages = update_messages(
+            state.messages, [HumanMessage(content=formatted_gen)]
+        )
+        profile = get_structured_output_with_retry(llm, ConceptProfileOutput, messages)
+        messages.append(
+            AIMessage(
+                content=f"<concept_profile_output>\n```\n{yaml.dump(profile.model_dump(), sort_keys=False)}\n```\n</concept_profile_output>"
+            )
+        )
+        # Step 2: Evaluation (goal-agnostic)
+        formatted_eval = concept_profile_evaluation_instructions.format(
+            research_concept=get_research_concept(state.concept, state.goal_context)
+        )
+        messages = update_messages(messages, [HumanMessage(content=formatted_eval)])
+        evaluation = get_structured_output_with_retry(
+            llm, ConceptProfileEvaluation, messages
+        )
+        messages.append(
+            AIMessage(
+                content=f"<concept_profile_evaluation>\n```\n{yaml.dump(evaluation.model_dump(), sort_keys=False)}\n```\n</concept_profile_evaluation>"
+            )
+        )
+        # Step 3: Action planning
+        formatted_action = concept_profile_action_instructions.format(
+            research_concept=get_research_concept(state.concept, state.goal_context),
+            evaluation_json=yaml.dump(evaluation.model_dump(), sort_keys=False),
+        )
+        messages = update_messages(messages, [HumanMessage(content=formatted_action)])
+        action_plan = get_structured_output_with_retry(llm, ActionPlan, messages)
+        messages.append(
+            AIMessage(
+                content=f"<concept_profile_action_plan>\n```\n{yaml.dump(action_plan.model_dump(), sort_keys=False)}\n```\n</concept_profile_action_plan>"
+            )
+        )
+        # De-dup & cap actions
+        action_plan.follow_up_queries = [
+            q for q in action_plan.follow_up_queries if q not in state.query_list
         ][: configurable.max_search_queries]
-        reflection_result.urls_to_extract = [
-            url
-            for url in reflection_result.urls_to_extract
-            if url not in state.url_list
+        action_plan.urls_to_extract = [
+            u for u in action_plan.urls_to_extract if u not in state.url_list
         ][: configurable.max_extract_urls]
 
         return {
-            "messages": [
-                HumanMessage(content=formatted_prompt),
-                AIMessage(
-                    content=f"<definition_reflection_output>\n```\n{yaml.dump(reflection_result.model_dump(), sort_keys=False)}\n```\n</definition_reflection_output>"
-                ),
-            ],
+            "messages": messages,
             "iteration_number": current_iteration,
-            "reflection": reflection_result,
+            "profile_output": profile,
+            "profile_evaluation": evaluation,
+            "profile_action": action_plan,
         }
 
     except Exception as e:
-        # Return default reflection on error
+        # Return default on error
         return {
             "messages": [
-                HumanMessage(content=formatted_prompt),
-                AIMessage(
-                    content=f"<definition_reflection_output>\n```\nError: {e}\n```\n</definition_reflection_output>"
-                ),
+                HumanMessage(content=formatted_gen),
+                AIMessage(content=f"Error in generating concept profile: {e}"),
             ],
             "iteration_number": current_iteration,
-            "reflection": None,
         }
 
 
@@ -448,10 +402,6 @@ def _concept_prerequisite_reflection(
 ) -> dict:
     """
     LangGraph node that reflects on prerequisite research.
-
-    Args:
-        state: Current state with reflection results
-
     """
     # Get the config
     configurable = Configuration.from_runnable_config(config)
@@ -463,6 +413,7 @@ def _concept_prerequisite_reflection(
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
 
+    # Existing confirmed prerequisites from AWG
     existing_prerequisites = [
         state.awg_context.get_node(rel.target_node_id).name
         for rel in state.awg_context.get_relationships_by_source(
@@ -470,50 +421,88 @@ def _concept_prerequisite_reflection(
         )
     ]
 
-    # Format the reflection prompt
-    formatted_prompt = prerequisites_reflection_instructions.format(
-        research_concept=get_research_concept(state.concept, state.goal_context),
-        top_queries=configurable.max_search_queries,
-        top_urls=configurable.max_extract_urls,
-        existing_prerequisites_str="\n".join(existing_prerequisites),
+    # Inputs for evaluation
+    candidate_prerequisites_str = (
+        yaml.dump(list(set(state.new_prerequisites)), sort_keys=False)
+        if len(state.new_prerequisites) > 0
+        else ""
     )
-    messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
+    alias_groups_str = (
+        yaml.dump(
+            getattr(state.prerequisite_evaluation, "alias_groups", []), sort_keys=False
+        )
+        if getattr(state, "prerequisite_evaluation", None) is not None
+        else ""
+    )
+
+    excluded_candidates = []
+    if isinstance(state.reflection, PrerequisiteResearchReflection):
+        excluded_candidates = getattr(state.reflection, "excluded_candidates", []) or []
+    excluded_candidates_str = (
+        yaml.dump(excluded_candidates, sort_keys=False) if excluded_candidates else ""
+    )
+
+    # Step 1: Evaluation
+    formatted_eval = prerequisites_evaluation_instructions.format(
+        research_concept=get_research_concept(state.concept, state.goal_context),
+        existing_prerequisites_str="\n".join(existing_prerequisites),
+        query_list_str="\n".join(state.query_list),
+        url_list_str="\n".join(state.url_list),
+        candidate_prerequisites_str=candidate_prerequisites_str,
+        alias_groups_str=alias_groups_str,
+        excluded_candidates_str=excluded_candidates_str,
+    )
+    messages_eval = update_messages(
+        state.messages, [HumanMessage(content=formatted_eval)]
+    )
 
     try:
-        # Generate reflection with retry
-        reflection_result = get_structured_output_with_retry(
-            llm, PrerequisiteResearchReflection, messages
+        evaluation = get_structured_output_with_retry(
+            llm, PrerequisiteEvaluation, messages_eval
         )
-        reflection_result.follow_up_queries = [
-            query
-            for query in reflection_result.follow_up_queries
-            if query not in state.query_list
+
+        # Step 2: Action planning
+        formatted_action = prerequisites_action_plan_instructions.format(
+            research_concept=get_research_concept(state.concept, state.goal_context),
+            evaluation_json=yaml.dump(evaluation.model_dump(), sort_keys=False),
+            existing_prerequisites_str="\n".join(existing_prerequisites),
+        )
+        messages_action = update_messages(
+            state.messages, [HumanMessage(content=formatted_action)]
+        )
+        action_plan = get_structured_output_with_retry(
+            llm, PrerequisiteActionPlan, messages_action
+        )
+        # De-dup & cap
+        action_plan.follow_up_queries = [
+            q for q in action_plan.follow_up_queries if q not in state.query_list
         ][: configurable.max_search_queries]
-        reflection_result.urls_to_extract = [
-            url
-            for url in reflection_result.urls_to_extract
-            if url not in state.url_list
+        action_plan.urls_to_extract = [
+            u for u in action_plan.urls_to_extract if u not in state.url_list
         ][: configurable.max_extract_urls]
 
         return {
             "messages": [
-                HumanMessage(content=formatted_prompt),
+                HumanMessage(content=formatted_eval),
                 AIMessage(
-                    content=f"<prerequisite_reflection_output>\n```\n{yaml.dump(reflection_result.model_dump(), sort_keys=False)}\n```\n</prerequisite_reflection_output>"
+                    content=f"<prerequisite_evaluation_output>\n```\n{yaml.dump(evaluation.model_dump(), sort_keys=False)}\n```\n</prerequisite_evaluation_output>"
+                ),
+                HumanMessage(content=formatted_action),
+                AIMessage(
+                    content=f"<prerequisite_action_plan>\n```\n{yaml.dump(action_plan.model_dump(), sort_keys=False)}\n```\n</prerequisite_action_plan>"
                 ),
             ],
             "iteration_number": current_iteration,
-            "reflection": reflection_result,
-            "new_prerequisites": reflection_result.new_prerequisites,
+            "prerequisite_evaluation": evaluation,
+            "prerequisite_action_plan": action_plan,
         }
 
     except Exception as e:
-        # Return default reflection on error
         return {
             "messages": [
-                HumanMessage(content=formatted_prompt),
+                HumanMessage(content=formatted_eval),
                 AIMessage(
-                    content=f"<prerequisite_reflection_output>\n```\nError: {e}\n```\n</prerequisite_reflection_output>"
+                    content=f"<prerequisite_evaluation_output>\n```\nError: {e}\n```\n</prerequisite_evaluation_output>"
                 ),
             ],
             "iteration_number": current_iteration,
@@ -525,87 +514,53 @@ def route_after_reflection(
 ) -> List[Send]:
     """
     LangGraph routing function that determines next step after reflection.
-
-    Args:
-        state: Current state with reflection results
-
-    Returns:
-        Next node to execute
     """
     # Get the config
     configurable = Configuration.from_runnable_config(config)
 
-    current_iteration = state.iteration_number
+    depth_exceeded = state.iteration_number >= configurable.max_iteration_main
 
-    # Determine if we should continue research
-    continue_research = should_continue_research(
-        state.reflection,
-        current_iteration,
-        state.max_iterations,
-        configurable.reflection_confidence,
-    )
-    # Enable raw content extraction if required
-    extract_content = (
-        current_iteration >= configurable.max_iter_until_extraction
-        and len(state.reflection.urls_to_extract) > 0
-    )
+    if state.research_mode == "definition":
+        follow_up_queries = getattr(state.profile_action, "follow_up_queries", []) or []
+        extracted_urls = getattr(state.profile_action, "urls_to_extract", []) or []
+        is_complete = getattr(state.profile_evaluation, "is_complete", False)
+    else:
+        follow_up_queries = (
+            getattr(state.prerequisite_action, "follow_up_queries", []) or []
+        )
+        extracted_urls = getattr(state.prerequisite_action, "urls_to_extract", []) or []
+        # Use coverage and continue flags to decide completion for prerequisites
+        eval_obj = getattr(state, "prerequisite_evaluation", None)
+        is_complete = False
+        if eval_obj is not None:
+            # stop if evaluation suggests not to continue and coverage high enough
+            is_complete = (not getattr(eval_obj, "continue_research", True)) and (
+                getattr(eval_obj, "coverage_estimate", 0.0) >= 0.8
+            )
 
-    sends = [
-        Send("web_search", WebSearchState(query=follow_up_query))
-        for follow_up_query in state.reflection.follow_up_queries
-    ]
-    if extract_content:
-        sends.extend(
-            [
-                Send("content_extractor", ContentExtractState(url=url))
-                for url in state.reflection.urls_to_extract
-            ]
+    no_follow_up = len(follow_up_queries) == 0 and len(extracted_urls) == 0
+    if depth_exceeded or no_follow_up or is_complete:
+        return (
+            "get_related_concepts"
+            if state.research_mode == "definition"
+            else "generate_prerequisites_output"
         )
 
-    if continue_research and len(sends) > 0:
-        return sends
-    else:
-        return "generate_research_result"
+    # Continue if there are follow-up queries
+    sends: List[Send] = []
+    for follow_up_query in follow_up_queries:
+        sends.append(Send("web_search", WebSearchState(query=follow_up_query)))
+    for url in extracted_urls:
+        sends.append(Send("content_extractor", ContentExtractState(url=url)))
+    return sends
 
 
-def generate_research_result(
+def generate_definition_output(
     state: ConceptResearchState, config: RunnableConfig
 ) -> dict:
     """
-    LangGraph node that generates the final research result based on research mode.
-
-    For definition mode: generates concept definition
-    For prerequisites mode: generates prerequisites
-
-    Args:
-        state: Current state with all research data
-
-    Returns:
-        State update with research results (definition and/or prerequisites)
+    LangGraph node that generates concept definition output.
     """
-    research_mode = state.research_mode or "definition"
-
-    if research_mode == "definition":
-        # Generate concept definition
-        return _generate_concept_definition(state, config)
-    else:
-        # Generate prerequisites
-        return _generate_prerequisites(state, config)
-
-
-def _generate_concept_definition(
-    state: ConceptResearchState, config: RunnableConfig
-) -> dict:
-    """
-    Helper function to generate concept definition.
-
-    Args:
-        state: Current state with all research data
-
-    Returns:
-        State update with concept definition
-    """
-
     # Get the config
     configurable = Configuration.from_runnable_config(config)
 
@@ -614,7 +569,7 @@ def _generate_concept_definition(
     llm = get_llm_by_type(llm_type)
 
     # Format the definition prompt
-    formatted_prompt = concept_definition_instructions.format(
+    formatted_prompt = concept_profile_output_instructions.format(
         research_concept=get_research_concept(state.concept, state.goal_context),
     )
     messages = update_messages(state.messages, [HumanMessage(content=formatted_prompt)])
@@ -622,7 +577,7 @@ def _generate_concept_definition(
     try:
         # Generate concept definition with retry
         concept_definition = get_structured_output_with_retry(
-            llm, ConceptDefinitionOutput, messages
+            llm, ConceptProfileOutput, messages
         )
 
         if concept_definition is None:
@@ -640,7 +595,7 @@ def _generate_concept_definition(
 
     except Exception as e:
         # Return minimal definition on error
-        default_definition = ConceptDefinitionOutput(
+        default_definition = ConceptProfileOutput(
             definition=f"Unable to generate definition for {state.concept.name}.",
             sources=[],
         )
@@ -653,19 +608,12 @@ def _generate_concept_definition(
         }
 
 
-def _generate_prerequisites(
+def generate_prerequisites_output(
     state: ConceptResearchState, config: RunnableConfig
 ) -> dict:
     """
-    Helper function to generate concept prerequisites.
-
-    Args:
-        state: Current state with concept definition
-
-    Returns:
-        State update with prerequisites
+    LangGraph node that generates concept prerequisites output.
     """
-
     # Get the config
     configurable = Configuration.from_runnable_config(config)
 
@@ -686,6 +634,29 @@ def _generate_prerequisites(
 
         if prerequisites is None:
             raise Exception("Concept prerequisites is None")
+
+        # Gate by evaluation if available (precision after recall)
+        allowed_names = None
+        if getattr(state, "prerequisite_evaluation", None) is not None:
+            ev = state.prerequisite_evaluation
+            allowed_names = set(
+                [
+                    ce.name
+                    for ce in ev.candidate_evaluations
+                    if ce.directness_pass
+                    and ce.direction_ok
+                    and ce.novelty_pass
+                    and ce.specificity_ok
+                    and ce.evidence_score
+                    >= getattr(configurable, "reflection_confidence", 0.7)
+                ]
+            )
+
+        if allowed_names is not None:
+            filtered = [
+                p for p in prerequisites.new_prerequisites if p.name in allowed_names
+            ]
+            prerequisites.new_prerequisites = filtered
 
         return {
             "messages": [
@@ -722,10 +693,30 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
     # Get the config
     configurable = Configuration.from_runnable_config(config)
     awg_context = state.awg_context.deep_copy()
-    existing = [
-        x.name.lower() for x in state.existing_prerequisites.existing_prerequisites
-    ]
-    for prereq in state.structured_output.new_prerequisites:
+    existing = (
+        [x.name.lower() for x in state.existing_prerequisites.existing_prerequisites]
+        if state.existing_prerequisites is not None
+        else []
+    )
+    # If we have evaluation results, only merge those that passed
+    allow_map = None
+    if getattr(state, "prerequisite_evaluation", None) is not None:
+        ev = state.prerequisite_evaluation
+        allow_map = {
+            ce.name.lower(): (
+                ce.directness_pass
+                and ce.direction_ok
+                and ce.novelty_pass
+                and ce.specificity_ok
+                and ce.evidence_score
+                >= getattr(configurable, "reflection_confidence", 0.7)
+            )
+            for ce in ev.candidate_evaluations
+        }
+
+    for prereq in state.prerequisite_output.new_prerequisites:
+        if allow_map is not None and not allow_map.get(prereq.name.lower(), False):
+            continue
         if (
             prereq.confidence < configurable.reflection_confidence
             or prereq.name.lower() in existing
@@ -890,13 +881,9 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         id=state.concept.id or str(uuid.uuid4()),
         name=state.concept.name,
         node_type=state.concept.node_type,
-        definition=state.structured_output.definition,
+        definition=state.profile_output.conceptualization.definition,
         definition_research=state.research_results,
-        definition_confidence_llm=(
-            getattr(state.reflection, "confidence_score", 0.0)
-            if state.reflection
-            else 0.0
-        ),
+        definition_confidence_llm=state.profile_output.conceptualization.confidence,
         last_updated_timestamp=datetime.now(),
     )
     # Ensure the defined concept exists in AWG
@@ -996,12 +983,14 @@ def create_concept_research_graph():
     builder.add_node("web_search", web_search)
     builder.add_node("content_extractor", content_extractor)
     builder.add_node("reflect_on_research", reflect_on_research)
-    builder.add_node("generate_research_result", generate_research_result)
+    builder.add_node("generate_definition_output", generate_definition_output)
+    builder.add_node("generate_prerequisites_output", generate_prerequisites_output)
     builder.add_node("get_related_concepts", get_related_concepts)
     builder.add_node("infer_relationship", infer_relationship)
     builder.add_node("merge_related_concepts", merge_related_concepts)
     builder.add_node("get_existing_prerequisites", get_existing_prerequisites)
     builder.add_node("merge_prerequisites", merge_prerequisites)
+
     # Add edges
     builder.add_edge(START, "generate_queries")
     builder.add_conditional_edges(
@@ -1012,13 +1001,14 @@ def create_concept_research_graph():
     builder.add_conditional_edges(
         "reflect_on_research",
         route_after_reflection,
-        ["web_search", "content_extractor", "generate_research_result"],
+        [
+            "web_search",
+            "content_extractor",
+            "get_related_concepts",
+            "generate_prerequisites_output",
+        ],
     )
-    builder.add_conditional_edges(
-        "generate_research_result",
-        route_after_generate,
-        ["get_related_concepts", "merge_prerequisites"],
-    )
+    builder.add_edge("generate_prerequisites_output", "merge_prerequisites")
     builder.add_conditional_edges(
         "get_related_concepts",
         route_after_related,

@@ -187,6 +187,12 @@ async def inner_loop(
         extracted_info = {
             "concept_defined": output_state.concept.model_dump(),
             "awg_context": output_state.awg_context.model_dump(),
+            "concept_profile_output": (
+                output_state.profile_output.model_dump()
+                if output_state.profile_output
+                else None
+            ),
+            "research_mode": output_state.research_mode,
         }
 
         session_log.log(
@@ -289,7 +295,34 @@ def awg_consolidator(
         },
     )
 
-    # Step 2: Find all duplicate stubs by comparing stub node names
+    # Step 2: Gating by reflection criteria before consolidation (discard weak nodes)
+    gated_inner_loop_results = []
+    from src.config import Configuration as _Cfg
+
+    _cfg = _Cfg()
+    for extracted_info in inner_loop_results:
+        try:
+            concept_profile_output = extracted_info.get("concept_profile_output")
+            if concept_profile_output and isinstance(concept_profile_output, dict):
+                unitness_pass = concept_profile_output.get("unitness_pass", False)
+                if not unitness_pass:
+                    # Discard this concept from persistence and further processing
+                    skipped_count += 1
+                    session_log.log(
+                        "INFO",
+                        "KG4: Discarded concept due to gating criteria",
+                        {
+                            "unitness_pass": unitness_pass,
+                        },
+                    )
+                    continue
+            gated_inner_loop_results.append(extracted_info)
+        except Exception:
+            gated_inner_loop_results.append(extracted_info)
+
+    inner_loop_results = gated_inner_loop_results
+
+    # Step 3: Find all duplicate stubs by comparing stub node names
     session_log.log("INFO", "KG4: Step 2 - Merging duplicate stubs")
 
     # Group stubs by name
@@ -322,7 +355,7 @@ def awg_consolidator(
         {"duplicate_stub_names": duplicate_stub_names},
     )
 
-    # Step 3: Infer relationships between defined concept nodes
+    # Step 4: Infer relationships between defined concept nodes
     session_log.log(
         "INFO", "KG4: Step 3 - Inferring relationships between defined concepts"
     )
@@ -371,7 +404,7 @@ def awg_consolidator(
         f"KG4: Added {len(other_relationships)} non-duplicate relationships to AWG",
     )
 
-    # Step 4: Handle duplicates and merge concepts
+    # Step 5: Handle duplicates and merge concepts
     session_log.log("INFO", "KG4: Step 4 - Handling duplicates and merging concepts")
 
     duplicate_relationships = [
@@ -428,7 +461,7 @@ def awg_consolidator(
             session_log.log("ERROR", f"KG4: Error merging duplicate concepts: {e}")
             consolidation_status = "PARTIAL_WITH_ISSUES"
 
-    # Step 5: Prepare for PKG commit and handle cycles
+    # Step 6: Prepare for PKG commit and handle cycles
     session_log.log("INFO", "KG4: Step 5 - Preparing for PKG commit")
 
     # Collect nodes and relationships to commit

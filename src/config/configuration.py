@@ -54,7 +54,8 @@ class Configuration:
 
     # Knowledge Graph
     reflection_confidence = 0.8  # Minimum reflection confidence threshold
-    max_search_queries = 2  # Maximum search queries per iteration
+    min_profile_quality: float = 0.7  # Gating threshold for canonical commit
+    max_search_queries = 3  # Maximum search queries per iteration
     max_extract_urls = 2  # Maximum URLs to extract per iteration
     max_iter_until_extraction = 3  # Iterations before enabling content extraction
     min_confidence = 0.7  # Minimum confidence threshold for concept research
