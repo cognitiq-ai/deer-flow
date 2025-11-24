@@ -11,16 +11,24 @@ from markdownify import markdownify as md
 class Article:
     url: str
 
-    def __init__(self, title: str, html_content: str, content: Optional[str] = None):
+    def __init__(
+        self,
+        title: str,
+        html_content: Optional[str] = None,
+        content: Optional[str] = None,
+    ):
         self.title = title
-        self.html_content = html_content
+        self._html_content = html_content
         self._content = content
 
     @property
     def content(self) -> str:
         if self._content:
             return self._content
-        return md(self.html_content)
+        elif self._html_content:
+            return md(self._html_content)
+        else:
+            return "No content available"
 
     def to_markdown(self, including_title: bool = True) -> str:
         markdown = ""

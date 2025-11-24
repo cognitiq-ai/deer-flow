@@ -32,6 +32,8 @@ class Crawler:
         # Get the raw response
         response = fetch_response(url)
         # Parse the buffer content
+        if response is None:
+            return Article(title="", content="")
         parsed = parser.from_buffer(response.data)
         content = clean(parsed["content"], lower=False)[:50000]
         title = parsed["metadata"].get("dc.title", "")

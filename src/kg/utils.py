@@ -1,30 +1,68 @@
 """Utility functions for the concept research LangGraph agent."""
 
-from copy import deepcopy
 from datetime import datetime
-from typing import Any, Dict, List, Type, TypeVar, Union
+from enum import Enum
+from typing import Any, Dict, List, Literal, Type, TypeVar
 
-from langchain_core.messages import AnyMessage
-from pydantic import BaseModel, ValidationError
+import yaml
+from pydantic import BaseModel, Field, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from typing_extensions import Annotated
 
-from src.kg.models import ConceptNode
-from src.kg.schemas import (
-    DefinitionResearchReflection,
-    PrerequisiteResearchReflection,
-)
+from src.kg.models import ConceptNode, RelationshipType
+
+
+def PydanticEnum(enum_cls: Type[Enum]):
+    """
+    Returns an Annotated type that contains:
+    1. The Literal validation (from enum values)
+    2. The Field description (from class docstring + enum descriptions)
+    """
+    # Extract values
+    valid_values = tuple(member.value.value for member in enum_cls)
+
+    # Extract docstrings
+    class_doc = enum_cls.__doc__ or ""
+    member_lines = [f"- '{m.value.value}': {m.value.description}" for m in enum_cls]
+    full_description = f"{class_doc}\n\nOptions:\n" + "\n".join(member_lines)
+
+    # Return an Annotated Type.
+    # This bundles the Type (Literal) and the Metadata (Field description) together.
+    return Annotated[Literal[valid_values], Field(description=full_description)]
+
+
+def make_inferred_relationship_model(
+    allowed: List[RelationshipType],
+) -> Type[BaseModel]:
+    """Create a dynamic Pydantic model that constrains relationship_type to allowed set.
+
+    Always includes NO_RELATIONSHIP as an allowed option so the model can express "none".
+    """
+    allowed_set = set(allowed or [])
+    allowed_set.add(RelationshipType.NO_RELATIONSHIP)
+    # Build a Literal of the raw enum values at runtime
+    literal_values = tuple(rt.value for rt in allowed_set)
+    AllowedLiteral = __import__("typing").Literal.__getitem__(literal_values)
+
+    # Create a new model class dynamically
+    Model = create_model(  # type: ignore[no-any-return]
+        "InferredRelationship",
+        relationship_type=(AllowedLiteral, ...),
+        direction=(int, ...),
+        confidence=(float, ...),
+        sources=(List[str], []),
+    )
+    return Model
+
+
+def format_message(key: str, value: str) -> str:
+    """Format message for presentation to LLM"""
+
+    return f"<{key}>\n```\n{value}\n```\n</{key}>"
 
 
 def get_research_concept(concept: ConceptNode, goal_context: str) -> str:
-    """
-    Get the research topic from the messages.
-
-    Args:
-        messages: List of messages from the conversation
-
-    Returns:
-        Research topic as a string
-    """
+    """Get the research topic from the messages."""
     # Create the "concept" in "topic" to achieve "goal" string
     if concept.name.lower() != goal_context.lower():
         concept_definition = concept.definition or ""
@@ -36,42 +74,31 @@ def get_research_concept(concept: ConceptNode, goal_context: str) -> str:
             return goal_context
 
 
-def update_messages(
-    messages: List[AnyMessage], new_messages: List[AnyMessage]
-) -> List[AnyMessage]:
+def to_yaml(obj: Any) -> str:
     """
-    Update the messages list with new messages.
+    Convert Pydantic objects and collections of them to YAML, ignoring None fields.
 
-    Args:
-        messages: List of existing messages
-        new_messages: New messages to add
-
-    Returns:
-        Updated list of messages
+    - If `obj` is a BaseModel, use `model_dump(exclude_none=True)`.
+    - If `obj` is a list/tuple, recursively sanitize each element.
+    - If `obj` is a dict, recursively sanitize its values.
+    - Otherwise, pass the object through to `yaml.dump` unchanged.
     """
 
-    messages_copy = deepcopy(messages)
-    for message in new_messages:
-        if len(messages_copy) == 0:
-            messages_copy.append(message)
-        elif messages_copy[-1].type == message.type:
-            messages_copy[-1].content += f"\n\n{message.content}"
-        else:
-            messages_copy.append(message)
+    def _to_serializable(value: Any) -> Any:
+        if isinstance(value, BaseModel):
+            return value.model_dump(exclude_none=True)
+        if isinstance(value, (list, tuple)):
+            return [_to_serializable(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _to_serializable(v) for k, v in value.items()}
+        return value
 
-    return messages_copy
+    cleaned = _to_serializable(obj)
+    return yaml.dump(cleaned, sort_keys=False)
 
 
 def format_search_results(search_results: List[Dict[str, Any]]) -> str:
-    """
-    Format search results for presentation to LLM.
-
-    Args:
-        search_results: List of search result dictionaries
-
-    Returns:
-        Formatted string representation of search results
-    """
+    """Format search results for presentation to LLM."""
     if not search_results:
         return "No search results available."
 
@@ -189,30 +216,6 @@ def create_research_context(
     return "\n".join(context_parts)
 
 
-def should_continue_research(
-    reflection_result: Union[
-        DefinitionResearchReflection, PrerequisiteResearchReflection
-    ],
-    current_loops: int,
-    max_loops: int,
-    confidence_threshold: float = 0.8,
-) -> bool:
-    """
-    Determine if research should continue based on reflection results.
-
-    Args:
-        reflection_result: Results from the reflection step
-        current_loops: Current number of research loops completed
-        max_loops: Maximum allowed research loops
-        confidence_threshold: Minimum confidence score to stop research
-
-    Returns:
-        True if research should continue, False otherwise
-    """
-
-    return False
-
-
 def get_current_date() -> str:
     """Get the current date in a readable format."""
     return datetime.now().strftime("%B %d, %Y")
@@ -222,7 +225,7 @@ def get_current_date() -> str:
 T = TypeVar("T", bound=BaseModel)
 
 
-def get_structured_output_with_retry(
+def llm_with_retry(
     llm,
     schema_class: Type[T],
     messages: Any,

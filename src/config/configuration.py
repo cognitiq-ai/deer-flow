@@ -53,7 +53,7 @@ class Configuration:
     enable_deep_thinking: bool = True  # Whether to enable deep thinking
 
     # Knowledge Graph
-    reflection_confidence = 0.8  # Minimum reflection confidence threshold
+    reflection_confidence = 0.85  # Minimum reflection confidence threshold
     min_profile_quality: float = 0.7  # Gating threshold for canonical commit
     max_search_queries = 3  # Maximum search queries per iteration
     max_extract_urls = 2  # Maximum URLs to extract per iteration

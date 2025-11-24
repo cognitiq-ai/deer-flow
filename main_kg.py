@@ -38,6 +38,7 @@ from src.orchestrator.session import session_orchestrator
 
 # Load environment variables
 load_dotenv()
+os.environ.setdefault("AGENT_RECURSION_LIMIT", "100")
 
 
 def ask_kg(

@@ -1,13 +1,183 @@
 """Tools and schemas for the concept research LangGraph agent."""
 
+from datetime import date
 from enum import Enum
-from typing import List, Optional, Type
+from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field
 
 from src.kg.models import RelationshipType
+from src.kg.utils import PydanticEnum
 
 
+# Generic enum descriptor
+class EnumDescriptor(BaseModel):
+    """A structure to hold the explicit value and description for each enum value."""
+
+    value: str
+    description: str = Field(
+        ..., description="A detailed explanation of the enum value."
+    )
+
+
+# Research Intents
+class ResearchIntent(Enum):
+    """Research intents for concept research."""
+
+    # --- Category 1: Foundational Definition & Scope ---
+    # What is this, precisely?
+    FIND_CORE_DEFINITION = EnumDescriptor(
+        value="find_core_definition",
+        description="Identify the non-negotiable essence, properties, and formal definition.",
+    )
+    ESTABLISH_BOUNDARIES = EnumDescriptor(
+        value="establish_boundaries",
+        description="Determine what the concept is and isn't through canonical examples and non-examples.",
+    )
+    BREAKDOWN_INTO_COMPONENTS = EnumDescriptor(
+        value="breakdown_into_components",
+        description="Identify the constituent sub-concepts or mechanical parts.",
+    )
+    IDENTIFY_CANONICAL_EXAMPLES = EnumDescriptor(
+        value="identify_canonical_examples",
+        description="Find the quintessential, textbook positive examples of the concept.",
+    )
+
+    # --- Category 2: Context & Relevance ---
+    # Why does this matter?
+    MAP_REAL_WORLD_APPLICATIONS = EnumDescriptor(
+        value="map_real_world_applications",
+        description="Find concrete examples of the concept in action in various domains (tech, nature, society).",
+    )
+    CONTEXTUALIZE_DOMAIN = EnumDescriptor(
+        value="contextualize_domain",
+        description="Locate the concept's significance within its academic or theoretical hierarchy.",
+    )
+
+    # --- Category 3: Relational & Prerequisite Mapping ---
+    # Where does this fit and what is needed to get here?
+    MAP_CONCEPTUAL_DEPENDENCIES = EnumDescriptor(
+        value="map_conceptual_dependencies",
+        description="Identify prior *concepts* and *facts* (declarative knowledge) required.",
+    )
+    IDENTIFY_SKILL_DEPENDENCIES = EnumDescriptor(
+        value="identify_skill_dependencies",
+        description="Identify prior *skills* and *procedures* (procedural knowledge) required.",
+    )
+    ASSESS_COGNITIVE_REQUIREMENTS = EnumDescriptor(
+        value="assess_cognitive_requirements",
+        description="Determine the required cognitive operations (e.g., abstract reasoning, systemic thinking) for the learner.",
+    )
+
+    # --- Category 4: Pedagogical Analysis ---
+    # How is this best taught and learned?
+    ANALYZE_COMMON_MISCONCEPTIONS = EnumDescriptor(
+        value="analyze_common_misconceptions",
+        description="Research the typical errors, pitfalls, and flawed mental models learners develop.",
+    )
+    SOURCE_EXPLANATORY_MODELS = EnumDescriptor(
+        value="source_explanatory_models",
+        description="Find the most effective analogies, metaphors, visualizations, and simulations for teaching the concept.",
+    )
+    DEFINE_MASTERY_LEVELS = EnumDescriptor(
+        value="define_mastery_levels",
+        description="Characterize the difference between novice, proficient, and expert understanding.",
+    )
+
+    # --- Category 5: Advanced Perspectives & Extension ---
+    # What's beyond the basics?
+    IDENTIFY_NEXT_CONCEPTS = EnumDescriptor(
+        value="identify_next_concepts",
+        description="Identify the future concepts or more complex skills that are unlocked by mastering this concept (consequential mapping).",
+    )
+
+
+# Web search and content extraction schemas
+class DateRange(BaseModel):
+    """A date range."""
+
+    date_from: Optional[date] = Field(
+        default=None, description="The start date of the date range."
+    )
+    date_to: Optional[date] = Field(
+        default=None, description="The end date of the date range."
+    )
+
+
+class SiteFilters(BaseModel):
+    """Site filters for a query."""
+
+    whitelist: List[str] = Field(
+        default_factory=list, description="Whitelisted sites for the query filter."
+    )
+    blacklist: List[str] = Field(
+        default_factory=list, description="Blacklisted sites for the query filter."
+    )
+
+
+class SearchQuery(BaseModel):
+    """A single search query with filters and constraints."""
+
+    intent: PydanticEnum(ResearchIntent)
+
+    query: str = Field(description="The search query without any operators.")
+    site_filters: Optional[SiteFilters] = Field(
+        default=None, description="Site filters for this query."
+    )
+    date_range: Optional[DateRange] = Field(
+        default=None, description="Date range for this query."
+    )
+    doc_types: List[str] = Field(
+        default_factory=list, description="Doc types for this query."
+    )
+    regions: List[str] = Field(
+        default_factory=list,
+        description="Two-letter ISO 3166 country code (e.g., `us` for United States, `jp` for Japan).",
+    )
+    languages: List[str] = Field(
+        default_factory=list,
+        description="Two-letter ISO 639-1 language code (e.g., `es` for Spanish, `fr` for French).",
+    )
+    negative_terms: List[str] = Field(
+        default_factory=list, description="Terms to exclude from this query."
+    )
+
+
+class ProfileResearchAction(BaseModel):
+    """Action for concept profile research."""
+
+    queries: List[SearchQuery] = Field(
+        min_length=1, description="The search queries for concept profile research."
+    )
+    urls: List[str] = Field(
+        default_factory=list,
+        description="URLs to extract content for concept profile research.",
+    )
+
+
+class WebSearchResult(BaseModel):
+    """Schema for web search results."""
+
+    title: str = Field(description="Title of the search result")
+    url: str = Field(description="URL of the search result")
+    content: str = Field(description="Content/snippet from the search result")
+    relevance_score: Optional[float] = Field(
+        description="Relevance score for the result", default=None
+    )
+
+
+class ExtractedContent(BaseModel):
+    """Schema for extracted web content."""
+
+    url: str = Field(description="URL of the extracted content")
+    title: str = Field(description="Title of the web page")
+    content: str = Field(description="Extracted content from the web page")
+    extraction_confidence: Optional[float] = Field(
+        description="Confidence in the extraction quality", default=None
+    )
+
+
+# Concept profile research schemas
 class BloomLevel(str, Enum):
     """Classification as per Bloom's Taxonomy"""
 
@@ -17,22 +187,6 @@ class BloomLevel(str, Enum):
     ANALYZE = "analyze"
     EVALUATE = "evaluate"
     CREATE = "create"
-
-
-class ConceptDifficulty(str, Enum):
-    """Estimated difficulty level (e.g., novice, intermediate, advanced)."""
-
-    NOVICE = "novice"
-    INTERMEDIATE = "intermediate"
-    ADVANCED = "advanced"
-
-
-class DefinitionSearchQueryList(BaseModel):
-    """Schema for generated search queries."""
-
-    queries: List[str] = Field(
-        description="List of search queries for defining the research concept"
-    )
 
 
 class Conceptualization(BaseModel):
@@ -123,8 +277,8 @@ class Exemplars(BaseModel):
 class EstimatedCognitiveLoad(BaseModel):
     """Estimated cognitive load including the difficulty and effort required for learning the concept"""
 
-    difficulty_estimate: ConceptDifficulty = Field(
-        description="Estimated difficulty level of the research concept (novice, intermediate, advanced)."
+    difficulty_estimate: Literal["novice", "intermediate", "advanced"] = Field(
+        description="Estimated difficulty level of the research concept."
     )
     effort_estimate_minutes: int = Field(
         description="Estimated time-on-task (in minutes) to learn the research concept at baseline depth (assuming mastery of any prerequisites)."
@@ -168,18 +322,10 @@ class ConceptProfileOutput(BaseModel):
     )
 
 
-class ConceptUnitness(str, Enum):
-    """The unitness of the <research_concept>."""
-
-    PASS = "is a single, assessable learning unit"
-    TOO_BROAD = "is too broad for a single learning unit"
-    TOO_NARROW = "is too narrow to stand alone as a unit"
-
-
 class UnitnessEvaluation(BaseModel):
     """The unitness evaluation."""
 
-    unitness: ConceptUnitness = Field(
+    unitness: Literal["pass", "too_broad", "too_narrow"] = Field(
         description="The final verdict on whether the concept is a good unit."
     )
     rationale: str = Field(
@@ -214,17 +360,6 @@ class EvidenceScore(BaseModel):
     rationale: str = Field(description="The rationale supporting the chosen score.")
 
 
-class KnowledgeGap(BaseModel):
-    """The knowledge gap evaluation."""
-
-    improve_fields: List[str] = Field(
-        description="The list of fields that need improvement in the concept profile."
-    )
-    description: str = Field(
-        description="The description of the knowledge gaps in the concept profile."
-    )
-
-
 class ConceptProfileEvaluation(BaseModel):
     """Structured evaluation of a concept's profile."""
 
@@ -237,261 +372,372 @@ class ConceptProfileEvaluation(BaseModel):
     evidence_score: EvidenceScore = Field(
         description="The evidence quality and sufficiency to support the concept profile in terms of the sources and agreement."
     )
-    knowledge_gap: KnowledgeGap = Field(
-        description="Objective summary of remaining knowledge gaps in the current state of research blocking a high-quality concept profile."
-    )
-    confidence: float = Field(
-        description="Confidence score (0-1) of the concept profile being sufficiently complete with minimal high-priority gaps."
-    )
-
-
-class DefinitionResearchReflection(BaseModel):
-    """Schema for definition research reflection and knowledge gap analysis."""
-
-    current_knowledge_summary: str = Field(
-        description="Summary of current knowledge about the <research_concept> and its role in the <main_learning_goal> based on the cumulative research thus far"
-    )
     knowledge_gap: str = Field(
-        description="The identified knowledge gaps in the concept's definition based on the cumulative research thus far:\n"
-        "- Is the `current_knowledge_summary` sufficient to formulate a precise definition of the <research_concept>?\n"
-        "- Is this definition clear, accurate, and comprehensive enough for a learner?\n"
-        "- Are there any missing key characteristics or components?\n"
-    )
-    follow_up_queries: List[str] = Field(
-        description="List of follow-up queries to address the identified `knowledge_gap`:\n"
-        "- Ensure that the queries are essential to understand the <research_concept>\n"
-        "- Ensure that each query is self-contained including all relevant context\n"
-        "- Ensure these are not already in <cumulative_queries_ran>\n"
-        "- Only list up to <n_top_queries> follow-up queries\n"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
-    )
-    urls_to_extract: List[str] = Field(
-        description="List of URLs to extract content from to address the identified `knowledge_gap`:\n"
-        "- Ensure these are valid URLs from prior research sources\n"
-        "- Ensure these are not already in <cumulative_urls_extracted>\n"
-        "- Only list up to <n_top_urls> URLs\n"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
+        description="Summary of remaining knowledge gaps in the current state of research blocking a high-quality concept profile."
     )
     confidence_score: float = Field(
-        description="Confidence score (0-1) of the completeness of required research and fulfilment of the `knowledge_gap` for defining the <research_concept> as applicable to <main_learning_goal>",
         ge=0.0,
         le=1.0,
+        description="Overall confidence score (0-1) of the concept profile being sufficiently complete with minimal high-priority gaps.",
     )
 
 
-class ActionPlan(BaseModel):
-    """Next actions to address failing criteria in evaluation.
-    TBD:
-    research_intents: prioritized list of actionable goals
-        Item: {id, intent_tag, question, target_fields[], success_criteria, needed_source_types[], rationale, priority, budget}
-    query_plans: executable plans per intent
-        Item: {intent_id, queries[], operators/filters, site_whitelist/blacklist, time_window, doc_types, region/lang, negative_terms, k_results, acceptance_criteria}
-    scope_directives: optional adjustments
-        Item: {action: {narrow, broaden, disambiguate, reframe}, guidance, examples}
+class ScopeDirectives(BaseModel):
+    """Scope directives for research action planning."""
 
-    Core intent tags
-    - `fill_missing` (unfilled fields)
-    - `raise_confidence` (low confidence or weak sources)
-    - `adjudicate_conflict` (contradictions)
-    - `evidence_upgrade` (replace low-authority/old sources)
-    - `diversify_sources` (independence/domain spread)
-    - `recency_update` (stale evidence)
-    - `scope_refine` (unitness/scope drift)
-    - `deep_discovery` (novel exemplars, misconceptions, counterexamples)
-    """
+    action: Literal["narrow", "broaden", "disambiguate", "reframe"] = Field(
+        description="The action to take to address the scope issue."
+    )
+    guidance: str = Field(description="The guidance for the action.")
+
+
+class ProfileActionPlan(BaseModel):
+    """Next actions to address failing criteria in evaluation."""
 
     knowledge_summary: str = Field(
         description="Summary of knowledge about the concept profile based on the cumulative research."
     )
-    research_intents: List[str] = Field(
-        description="Prioritized list of actionable goals to address the identified knowledge gaps in the research for concept profile."
-    )
-    follow_up_queries: List[str] = Field(
-        default_factory=list,
-        description="Follow-up queries targeted at failing criteria and knowledge gaps as per the research intents.",
-    )
-    urls_to_extract: List[str] = Field(
-        default_factory=list,
-        description="URLs to extract content from to gather missing evidence and address knowledge gaps as per the research intents.",
-    )
-    target_fail_criteria: List[str] = Field(
-        default_factory=list,
-        description="Names of failing criteria and knowledge gaps the actions intend to improve.",
+    action_plan: List[ProfileResearchAction] = Field(
+        min_length=1,
+        description="Prioritized list of actionable goals to address the identified knowledge gaps in the research for concept profile.",
     )
 
 
-class PrerequisiteResearchReflection(BaseModel):
-    """Schema for prerequisite research reflection and gap analysis."""
+class CoverageEvaluation(BaseModel):
+    """Coverage evaluation for prerequisite research."""
 
-    new_prerequisites: List[str] = Field(
-        description="The set of **new** candidate prerequisite concepts identified based on the cumulative research thus far with each concept being:\n"
-        "- Distinct, self-contained unit of study that can be mastered and assessed independently\n"
-        "- Directionally unambiguous, i.e. <research_concept> is not a prerequisite of this new prerequisite concept\n"
-        "- Directly and specifically relates as a prerequisite for the <research_concept>\n"
-        "- Not already identified in <existing_prerequisites>\n"
-        "- Relevant to the <main_learning_goal>\n"
-    )
-    knowledge_gap: str = Field(
-        description="The knowledge gaps in the current state of research to understand and refine the newly identified candidate prerequisites (`new_prerequisites`) including but not limited to:\n"
-        "- How are these *directly and specifically* related to the <research_concept>?\n"
-        "- Are these prerequisites sufficiently distinct, self-contained learning units that can be mastered and assessed independently?\n"
-        "- What are other potentially relevant prerequisites to <research_concept> that are still missing?\n"
-        "- Are the prerequisites *relevant* to the <main_learning_goal>?\n"
-    )
-    follow_up_queries: List[str] = Field(
-        description="List of follow-up queries to address the identified `knowledge_gap`:\n"
-        "- Ensure these are essential to understand the <research_concept>\n"
-        "- Ensure each query is self-contained including all relevant context\n"
-        "- Only list up to <n_top_queries> follow-up queries\n"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
-    )
-    urls_to_extract: List[str] = Field(
-        description="List of URLs for content extraction to address the identified `knowledge_gap`:\n"
-        "- Ensure these are valid URLs from prior research sources\n"
-        "- Only list up to <n_top_urls> URLs\n"
-        "- Return an empty list if you are confident that the `knowledge_gap` is addressed\n"
-    )
-    confidence_score: float = Field(
-        description="Confidence score (0-1) of the completeness of required research for confirming the identified candidate prerequisites of the <research_concept>",
+    coverage_score: float = Field(
         ge=0.0,
         le=1.0,
+        description="Recall proxy: how much of the direct prerequisite set is likely covered",
     )
+    coverage_gap: str = Field(
+        description="Short summary of remaining coverage gaps in the current prerequisite discovery research for the research concept."
+    )
+    missing_concepts: List[str] = Field(
+        default_factory=list,
+        description="Short list of the most important missing conceptual building blocks to target next.",
+    )
+    lenses_gap: List[Literal["semantics", "mereology", "ontology", "hierarchy"]] = (
+        Field(
+            default_factory=list,
+            description="Which of the four discovery lenses (Semantics, Mereology, Ontology, Hierarchy) still have notable gaps.",
+        )
+    )
+
+
+class NoveltyScore(BaseModel):
+    """Novelty evaluation for prerequisite research."""
+
+    novelty_score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Novelty score for the prerequisite discovery research.",
+    )
+    alias_groups: List[List[str]] = Field(
+        default_factory=list,
+        description="List of alias groups discovered in the <candidate_prerequisites>. Each alias group is a set of duplicate prerequisite candidates.",
+    )
+    novelty_gap: str = Field(
+        description="Short summary of remaining novelty/aliasing issues in the current prerequisite discovery research.",
+    )
+
+
+class DirectionEvaluation(BaseModel):
+    """Direction evaluation for prerequisite research."""
+
+    direction_ok: bool = Field(
+        description="Whether the candidate is a prerequisite of the research concept (not inverted)"
+    )
+    rationale: str = Field(
+        description="Brief rationale describing how the candidate is a direct prerequisite of the research concept."
+    )
+
+
+class ConceptualCheck(BaseModel):
+    """Check if the candidate is a conceptual building block."""
+
+    is_conceptual: bool = Field(
+        description="Whether the candidate is a conceptual building block of the research concept."
+    )
+    rationale: str = Field(description="Rationale for the conceptual check.")
+
+
+class PrerequisiteResearchAction(BaseModel):
+    """Actions for prerequisite research."""
+
+    queries: List[SearchQuery] = Field(
+        min_length=1,
+        description="The search queries for this prerequisite research action as per the research intent.",
+    )
+    urls: List[str] = Field(
+        default_factory=list,
+        description="URLs to extract content for this prerequisite research action as per the research intent.",
+    )
+
+
+class PrerequisiteType(Enum):
+    """Pedagogical category of the prerequisite relationship."""
+
+    DEFINITIONAL = EnumDescriptor(
+        value="definitional",
+        description="Required to understand the formal definition of the target concept.",
+    )
+    STRUCTURAL = EnumDescriptor(
+        value="structural",
+        description="The prerequisite is a required physical or mechanical component/part of the target concept.",
+    )
+    TAXONOMIC = EnumDescriptor(
+        value="taxonomic",
+        description="The prerequisite is a required parent or superordinate category of the target concept.",
+    )
+    PROCEDURAL = EnumDescriptor(
+        value="procedural",
+        description="The prerequisite is a required step, skill, or input necessary to perform the procedure related to the target concept.",
+    )
+    OTHER = EnumDescriptor(
+        value="other",
+        description="None of the above categories accurately describe the relationship.",
+    )
+
+
+class PrerequisiteDiscoveryCandidate(BaseModel):
+    """Phase 1 discovery candidate: simple raw prerequisite concept.
+
+    These are lightweight working candidates surfaced directly from research context
+    (AWG graph, pending items, external search) before any global organization.
+    """
+
+    name: str = Field(
+        description="Short working label for the candidate prerequisite concept."
+    )
+    description: str = Field(
+        description="Brief explanation of why or how this concept is related to the research concept."
+    )
+    sources: List[str] = Field(
+        default_factory=list,
+        description="Optional source URLs or identifiers supporting this candidate.",
+    )
+
+
+class CandidatePrerequisites(BaseModel):
+    """Phase 1 (discovery) output: raw prerequisite candidates."""
+
+    candidates: List[PrerequisiteDiscoveryCandidate] = Field(
+        default_factory=list,
+        description="Raw prerequisite candidates proposed directly from the discovery context.",
+    )
+
+
+class ConceptPrerequisite(BaseModel):
+    """Canonical prerequisite concept used for evaluation and graph integration.
+
+    These are the organized (taxonomized) units produced after the discovery phase; each
+    represents a single, assessable learning unit with a stable name and definition.
+    """
+
+    name: str = Field(
+        description="A concise name that accurately and specifically reflects the unambiguous definition/scope of the prerequisite concept"
+    )
+    description: str = Field(
+        description="A brief explanation of why this is a direct prerequisite of the research concept"
+    )
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="The confidence that this concept is a direct prerequisite of the research concept.",
+    )
+    sources: List[str] = Field(
+        default_factory=list,
+        description="URLs or identifiers of the research sources that support identifying this prerequisite",
+    )
+    prerequisite_type: PydanticEnum(PrerequisiteType)
+
+    knowledge_gap: Optional[str] = Field(
+        default=None,
+        description="Short summary of remaining knowledge gaps in the current state of research blocking a high-quality concept profile.",
+    )
+    cluster_label: Optional[str] = Field(
+        default=None,
+        description="Optional short label or bucket name for a local prerequisite cluster.",
+    )
+    source_candidates: List[str] = Field(
+        default_factory=list,
+        description="Names of discovery candidates that were merged or split to form this canonical concept.",
+    )
+
+
+class CanonicalPrerequisites(BaseModel):
+    """Phase 2 (organization) output: canonical prerequisite concepts.
+
+    This is the collection of taxonomized `ConceptPrerequisite` units that will be
+    passed into downstream evaluation and graph updates.
+    """
+
+    canonical_prerequisites: List[ConceptPrerequisite] = Field(
+        default_factory=list,
+        description="Canonical prerequisite concepts after organizing, merging, and splitting discovery candidates.",
+    )
+
+
+class PrerequisiteRejectionReason(Enum):
+    """Pedagogical reasons for rejecting a prerequisite candidate as a direct prerequisite."""
+
+    IS_SUBCONCEPT = EnumDescriptor(
+        value="is_subconcept",
+        description="The candidate is an integral component within the scope of the research concept, rather than a prerequisite that must be understood apriori.",
+    )
+    NECESSITY = EnumDescriptor(
+        value="necessity_violation",
+        description="Mastery of the target concept is possible without explicitly mastering the candidate concept.",
+    )
+    DIRECTIONALITY = EnumDescriptor(
+        value="ambiguous_directionality",
+        description="The relationship direction is inverted (target is prerequisite of candidate) or the directionality is fundamentally ambiguous.",
+    )
+    NOT_CONCEPTUAL = EnumDescriptor(
+        value="not_conceptual",
+        description="The candidate is a skill, fact, or unrelated item, not a conceptual building block suitable for this mapping.",
+    )
+
+
+class PrerequisiteRefinementType(Enum):
+    """Structured refinement recommendations for accepted prerequisite candidates."""
+
+    OK = EnumDescriptor(
+        value="ok",
+        description="The prerequisite is already a good unit and does not need any refinement.",
+    )
+    NAME_CLARITY = EnumDescriptor(
+        value="name_clarity",
+        description="The name of the prerequisite is ambiguous or misleading and should be clarified in subsequent iterations.",
+    )
+    SCOPE_SHARPEN = EnumDescriptor(
+        value="scope_sharpen",
+        description="The conceptual boundaries of the prerequisite need tightening/clarification to define exactly what is included and excluded.",
+    )
+    RESOLVE_DEPENDENCY = EnumDescriptor(
+        value="resolve_dependency",
+        description="The candidate is valid, but not a direct prerequisite; pinpoint the specific intermediary that immediately precedes the research concept.",
+    )
+    STRUCTURE_REVISE = EnumDescriptor(
+        value="structure_revise",
+        description="The concept may conflate multiple ideas or substantially overlap with another concept; it may need to be split, merged, or have its relational adjustment revisited.",
+    )
+    EVIDENCE_STRENGTHEN = EnumDescriptor(
+        value="evidence_strengthen",
+        description="Supporting evidence for the relationship is adequate but should be strengthened or diversified in a future review.",
+    )
+    OTHER = EnumDescriptor(
+        value="other",
+        description="The necessary refinement does not fit any of the predefined categories.",
+    )
+
+
+class DependencyStrength(BaseModel):
+    """Quantifiable measure of dependency necessity."""
+
+    score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Necessity Score: 1.0 = Absolute blocking dependency (impossible to learn target without this). 0.0 = Helpful context but not strictly required.",
+    )
+    category: PrerequisiteType = Field(
+        description="The theoretical basis for this dependency."
+    )
+    rationale: str = Field(description="Justification using the Counterfactual Test.")
 
 
 class PrerequisiteCandidateEvaluation(BaseModel):
     """Evaluation for a single prerequisite candidate."""
 
-    name: str = Field(description="Candidate concept name")
-    directness_pass: bool = Field(
-        description="Immediate, necessary, specific prerequisite for the research concept"
+    name: str = Field(description="The name of the prerequisite candidate.")
+    refinements: Union[
+        PydanticEnum(PrerequisiteRejectionReason),
+        PydanticEnum(PrerequisiteRefinementType),
+    ] = Field(description="The refinements to the prerequisite candidate.")
+    rationale: str = Field(
+        description="Concise rationale behind the provided evaluation of the candidate prerequisite (direction, unitness, evidence sufficiency)."
     )
-    direction_ok: bool = Field(
-        description="Direction is candidate -> research_concept (not inverted)"
+
+    @property
+    def accepted(self) -> bool:
+        """Whether this candidate is accepted as a direct prerequisite."""
+        refinement_values = {
+            member.value.value for member in PrerequisiteRefinementType
+        }
+        return (
+            isinstance(self.refinements, str) and self.refinements in refinement_values
+        )
+
+
+class PrerequisiteCandidateEvaluationBatch(BaseModel):
+    """Batch of per-candidate evaluations for canonical prerequisites."""
+
+    candidate_evaluations: List[PrerequisiteCandidateEvaluation] = Field(
+        default_factory=list,
+        description="Per-candidate evaluation results for canonical prerequisite concepts.",
     )
-    novelty_pass: bool = Field(
-        description="Not already known/confirmed and not a duplicate/alias"
+
+
+class PrerequisiteGlobalSignals(BaseModel):
+    """Global coverage/novelty/evidence signals for the prerequisite set."""
+
+    coverage_eval: CoverageEvaluation = Field(
+        description="Recall/Coverage evaluation for the prerequisite discovery research.",
     )
-    specificity_ok: bool = Field(
-        description="Not too broad or too narrow as a prerequisite"
+    novelty_score: NoveltyScore = Field(
+        description="Novelty score for the prerequisite discovery research.",
     )
-    evidence_score: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Authority/consensus/recency proxy score",
+    evidence_score: EvidenceScore = Field(
+        description="The evidence quality/sufficiency to support the candidate prerequisites in terms of the sources and agreement.",
     )
-    overall_quality_score: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Composite quality score combining directness, direction, novelty, specificity, evidence",
-    )
-    issues: List[str] = Field(
-        default_factory=list, description="Reasons for any failures or doubts"
+    weak_evidence_candidates: List[str] = Field(
+        default_factory=list,
+        description="Names of canonical prerequisites whose supporting evidence is relatively weak and should be strengthened.",
     )
 
 
 class PrerequisiteEvaluation(BaseModel):
     """Global evaluation signals and per-candidate judgments for the loop."""
 
-    coverage_estimate: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Recall proxy: how much of the direct prerequisite set is likely covered",
-    )
-    query_diversity_score: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="The diversity of the queries used to find the prerequisites.",
-    )
-    contradictions_flag: bool = Field(
-        description="Directional or semantic conflicts in sources"
-    )
-    duplicates_found: List[str] = Field(
-        default_factory=list, description="Names to ignore in future loops"
-    )
-    negative_candidates: List[str] = Field(
-        default_factory=list, description="Ruled-out non-prereqs to suppress"
+    global_signals: PrerequisiteGlobalSignals = Field(
+        description="Global coverage/novelty/evidence signals for the prerequisite set.",
     )
     candidate_evaluations: List[PrerequisiteCandidateEvaluation] = Field(
         default_factory=list,
-        description="Per-candidate evaluation results",
+        description="Per-candidate evaluation results for the <candidate_prerequisites>.",
     )
-    knowledge_gap: str = Field(
-        description="Objective summary of remaining knowledge gaps in the currect state of research blocking a high-quality definition of the <research_concept>."
-    )
-    is_complete: bool = Field(
-        description="The flag indicating whether the research is complete enough to support the identification of new prerequisites of the <research_concept>."
-    )
+
+    @property
+    def confidence_score(self) -> float:
+        return self.global_signals.coverage_eval.coverage_score
+
+    @property
+    def coverage_gap(self) -> str:
+        """Proxy to access the coverage gap directly (used by the graph code)."""
+        return self.global_signals.coverage_eval.coverage_gap
 
 
 class PrerequisiteActionPlan(BaseModel):
     """Action plan to address gaps discovered in evaluation."""
 
-    follow_up_queries: List[str] = Field(
-        default_factory=list,
-        description="Self-contained recall-focused queries to run next",
+    knowledge_summary: str = Field(
+        description="Summary of knowledge about the prerequisites based on the cumulative research."
     )
-    urls_to_extract: List[str] = Field(
-        default_factory=list, description="URLs for targeted content extraction"
-    )
-    query_themes: List[str] = Field(
-        default_factory=list,
-        description="Themes/patterns such as 'syllabus before X', synonyms, foundations",
-    )
-    expansion_operators: List[str] = Field(
-        default_factory=list,
-        description="Operators like synonyms, curriculum, decomposition, taxonomy",
-    )
-
-
-# Extend PrerequisiteResearchReflection with evaluation/action/memory (optional fields for compatibility)
-setattr(
-    PrerequisiteResearchReflection,
-    "evaluation",
-    Field(
+    refinement_action: Optional[PrerequisiteResearchAction] = Field(
         default=None,
-        description="Evaluation object for current loop",
-        annotation=Optional[PrerequisiteEvaluation],
-    ),
-)
-setattr(
-    PrerequisiteResearchReflection,
-    "action_plan",
-    Field(
-        default=None,
-        description="Action plan for next loop",
-        annotation=Optional[PrerequisiteActionPlan],
-    ),
-)
-setattr(
-    PrerequisiteResearchReflection,
-    "excluded_candidates",
-    Field(
-        default_factory=list,
-        description="Suppressed candidates accumulated across loops",
-        annotation=List[str],
-    ),
-)
-
-
-class WebSearchResult(BaseModel):
-    """Schema for web search results."""
-
-    title: str = Field(description="Title of the search result")
-    url: str = Field(description="URL of the search result")
-    content: str = Field(description="Content/snippet from the search result")
-    relevance_score: Optional[float] = Field(
-        description="Relevance score for the result", default=None
+        description=(
+            "Research actions targeting refinement of existing canonical prerequisites "
+            "(naming, scope, structure, or evidence) based primarily on candidate-level evaluations."
+        ),
     )
-
-
-class ExtractedContent(BaseModel):
-    """Schema for extracted web content."""
-
-    url: str = Field(description="URL of the extracted content")
-    title: str = Field(description="Title of the web page")
-    content: str = Field(description="Extracted content from the web page")
-    extraction_confidence: Optional[float] = Field(
-        description="Confidence in the extraction quality", default=None
+    expansion_action: Optional[PrerequisiteResearchAction] = Field(
+        default=None,
+        description=(
+            "Research actions targeting improved coverage, novelty/alias resolution, and "
+            "evidence quality based primarily on global prerequisite signals."
+        ),
     )
 
 
@@ -510,78 +756,4 @@ class InferredRelationship(BaseModel):
     sources: List[str] = Field(
         default_factory=list,
         description="Source ids (`sources.id`) from where the relationship is inferred",
-    )
-
-
-def make_inferred_relationship_model(
-    allowed: List[RelationshipType],
-) -> Type[BaseModel]:
-    """Create a dynamic Pydantic model that constrains relationship_type to allowed set.
-
-    Always includes NO_RELATIONSHIP as an allowed option so the model can express "none".
-    """
-    allowed_set = set(allowed or [])
-    allowed_set.add(RelationshipType.NO_RELATIONSHIP)
-    # Build a Literal of the raw enum values at runtime
-    literal_values = tuple(rt.value for rt in allowed_set)
-    AllowedLiteral = __import__("typing").Literal.__getitem__(literal_values)
-
-    # Create a new model class dynamically
-    Model = create_model(  # type: ignore[no-any-return]
-        "InferredRelationshipDyn",
-        relationship_type=(AllowedLiteral, ...),
-        direction=(int, ...),
-        confidence=(float, ...),
-        sources=(List[str], []),
-    )
-    return Model
-
-
-class ConceptPrerequisite(BaseModel):
-    """Structured output schema for a single *direct* prerequisite."""
-
-    name: str = Field(
-        description="A clear and concise name of the identified prerequisite"
-    )
-    description: str = Field(
-        description="A brief explanation of *why* this is a direct prerequisite of <research_concept> in the context of <main_learning_topic>"
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="The confidence that this concept is a *direct prerequisite* of <research_concept>. Be careful about the direction of the relationship here!",
-    )
-    sources: List[str] = Field(
-        default_factory=list,
-        description="URLs or identifiers of the research sources that support identifying this prerequisite",
-    )
-
-
-class ConceptPrerequisiteOutput(BaseModel):
-    """Structured output schema for a list of prerequisites."""
-
-    new_prerequisites: List[ConceptPrerequisite] = Field(
-        description="List of the identified prerequisites for the <research_concept>"
-        "- Must strictly adhere to the <definitions> of prerequisite\n"
-        "- Must be *immediate* and *necessary* to understand the <research_concept>\n"
-        "- Must be *distinct, self-contained* units of study that can be mastered and assessed independently\n"
-        "- Must have unambiguous directionality, i.e. <research_concept> **cannot be a prerequisite** of this concept\n"
-        "- Must avoid indirect/transitive relationships, e.g. overly general concepts unless direct, specific to <research_concept>\n"
-        "- Must be *relevant* to the <main_learning_goal>\n"
-        "Return an empty list if no new prerequisites can be identified"
-    )
-
-
-class ExistingPrerequisiteOutput(BaseModel):
-    """Structured output schema for a list of existing prerequisites."""
-
-    existing_prerequisites: List[ConceptPrerequisite] = Field(
-        description="List of the existing prerequisites of <research_concept>:\n"
-        "- Must strictly adhere to the <definitions> of prerequisite\n"
-        "- Must be part of the <candidate_concepts>\n"
-        "- Must be *immediate* and *necessary* to understand the <research_concept>\n"
-        "- Must have unambiguous directionality, i.e. <research_concept> **cannot be a prerequisite** of this concept\n"
-        "- Must avoid indirect/transitive relationships, e.g. overly general concepts unless direct, specific to <research_concept>\n"
-        "- Must be *relevant* to the <main_learning_goal>\n"
-        "Return an empty list if no existing prerequisites can be identified"
     )

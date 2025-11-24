@@ -154,18 +154,17 @@ async def inner_loop(
         )
 
         config = {
+            "recursion_limit": 100,
             "configurable": {
                 "enable_deep_thinking": config_data.get("enable_deep_thinking", True),
             },
-            "max_definition_research_loops": 100,
         }
         # Run definition research agent graph
         initial_state = ConceptResearchState(
             concept=c_focus,
             goal_context=goal_context_str,
             awg_context=awg_context,
-            research_mode="definition",
-            max_iterations=config["max_definition_research_loops"],
+            research_mode="profile",
         )
 
         session_log.log("INFO", f"Starting research process for {c_focus.name}")
@@ -187,11 +186,7 @@ async def inner_loop(
         extracted_info = {
             "concept_defined": output_state.concept.model_dump(),
             "awg_context": output_state.awg_context.model_dump(),
-            "concept_profile_output": (
-                output_state.profile_output.model_dump()
-                if output_state.profile_output
-                else None
-            ),
+            "concept_profile": output_state.profile.model_dump(),
             "research_mode": output_state.research_mode,
         }
 
@@ -243,47 +238,40 @@ def awg_consolidator(
 
     # Collect all AWGs and defined concepts
     for extracted_info in inner_loop_results:
-        try:
-            if not extracted_info:
-                session_log.log("WARNING", "KG4: Empty extracted_info from inner loop")
-                failed_count += 1
-                consolidation_status = "PARTIAL_WITH_ISSUES"
-                continue
-
-            # Get the updated AWG context from inner loop processing
-            awg_context_data = extracted_info.get("awg_context")
-            if awg_context_data:
-                awg_context_updated = AgentWorkingGraph(**awg_context_data)
-
-                # Merge this AWG into the consolidated AWG
-                consolidated_awg.merge_awg(awg_context_updated)
-
-                session_log.log(
-                    "INFO",
-                    f"KG4: Merged AWG context with {len(awg_context_updated.nodes)} nodes and {len(awg_context_updated.relationships)} relationships",
-                )
-
-            # Collect defined concepts for relationship inference
-            concept_defined_data = extracted_info.get("concept_defined")
-            if concept_defined_data:
-                concept_defined = ConceptNode(**concept_defined_data)
-                defined_concepts.append(concept_defined)
-                processed_count += 1
-
-                session_log.log(
-                    "INFO",
-                    f"KG4: Collected defined concept {concept_defined.name}",
-                    {
-                        "concept_id": concept_defined.id,
-                        "definition_confidence": concept_defined.confidence,
-                        "status": concept_defined.status,
-                    },
-                )
-
-        except Exception as e:
-            session_log.log("ERROR", f"KG4: Error processing inner loop result: {e}")
+        if not extracted_info:
+            session_log.log("WARNING", "KG4: Empty extracted_info from inner loop")
             failed_count += 1
             consolidation_status = "PARTIAL_WITH_ISSUES"
+            continue
+
+        # Get the updated AWG context from inner loop processing
+        awg_context_data = extracted_info.get("awg_context")
+        if awg_context_data:
+            awg_context_updated = AgentWorkingGraph(**awg_context_data)
+            # Merge this AWG into the consolidated AWG
+            consolidated_awg.merge_awg(awg_context_updated)
+
+            session_log.log(
+                "INFO",
+                f"KG4: Merged AWG context with {len(awg_context_updated.nodes)} nodes and {len(awg_context_updated.relationships)} relationships",
+            )
+
+        # Collect defined concepts for relationship inference
+        concept_defined_data = extracted_info.get("concept_defined")
+        if concept_defined_data:
+            concept_defined = ConceptNode(**concept_defined_data)
+            defined_concepts.append(concept_defined)
+            processed_count += 1
+
+            session_log.log(
+                "INFO",
+                f"KG4: Collected defined concept {concept_defined.name}",
+                {
+                    "concept_id": concept_defined.id,
+                    "definition_confidence": concept_defined.confidence,
+                    "status": concept_defined.status,
+                },
+            )
 
     session_log.log(
         "INFO",
@@ -295,34 +283,7 @@ def awg_consolidator(
         },
     )
 
-    # Step 2: Gating by reflection criteria before consolidation (discard weak nodes)
-    gated_inner_loop_results = []
-    from src.config import Configuration as _Cfg
-
-    _cfg = _Cfg()
-    for extracted_info in inner_loop_results:
-        try:
-            concept_profile_output = extracted_info.get("concept_profile_output")
-            if concept_profile_output and isinstance(concept_profile_output, dict):
-                unitness_pass = concept_profile_output.get("unitness_pass", False)
-                if not unitness_pass:
-                    # Discard this concept from persistence and further processing
-                    skipped_count += 1
-                    session_log.log(
-                        "INFO",
-                        "KG4: Discarded concept due to gating criteria",
-                        {
-                            "unitness_pass": unitness_pass,
-                        },
-                    )
-                    continue
-            gated_inner_loop_results.append(extracted_info)
-        except Exception:
-            gated_inner_loop_results.append(extracted_info)
-
-    inner_loop_results = gated_inner_loop_results
-
-    # Step 3: Find all duplicate stubs by comparing stub node names
+    # Step 2: Find all duplicate stubs by comparing stub node names
     session_log.log("INFO", "KG4: Step 2 - Merging duplicate stubs")
 
     # Group stubs by name

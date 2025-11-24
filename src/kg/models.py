@@ -414,6 +414,15 @@ class AgentWorkingGraph(BaseModel):
             if r.target_node_id == target_node_id and r.type == (rel_type or r.type)
         ]
 
+    def get_target_neighbors(
+        self, node_id: str, rel_type: Optional[RelationshipType] = None
+    ) -> List[ConceptNode]:
+        """Get all neighbors of the given node."""
+        return [
+            self.get_node(r.target_node_id)
+            for r in self.get_relationships_by_source(node_id, rel_type)
+        ]
+
     def delete_node(self, node_id: str) -> None:
         """Delete a node from the working graph."""
         if node_id in self.nodes:
@@ -1316,7 +1325,9 @@ class AgentWorkingGraph(BaseModel):
         return list(map(lambda x: self.get_node(x).id, post))
 
     def get_definitions(
-        self, nodes: Optional[List[ConceptNode]] = None
+        self,
+        nodes: Optional[List[ConceptNode]] = None,
+        char_limit: Optional[int] = None,
     ) -> Dict[str, str]:
         """
         Get the definitions of the given nodes if provided else all nodes.
@@ -1324,9 +1335,12 @@ class AgentWorkingGraph(BaseModel):
         definitions = {}
         check_nodes = nodes if nodes is not None else self.nodes.values()
         for node in check_nodes:
-            name = f"**{node.name}**"
             if node.definition:
-                definitions[name] = node.definition
+                definitions[node.name] = (
+                    node.definition
+                    if not char_limit
+                    else node.definition[:char_limit] + "..."
+                )
         return definitions
 
     def to_incident_encoding(
