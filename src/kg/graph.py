@@ -39,6 +39,7 @@ from src.kg.schemas import (
     PrerequisiteResearchAction,
     ProfileActionPlan,
     ProfileResearchAction,
+    ResearchUrl,
 )
 from src.kg.state import (
     ConceptPrerequisiteState,
@@ -47,6 +48,7 @@ from src.kg.state import (
     ContentExtractState,
     InferRelationshipsState,
     InferRelationshipState,
+    ResearchIndex,
     WebSearchState,
 )
 from src.kg.utils import (
@@ -59,6 +61,33 @@ from src.kg.utils import (
 from src.llms.llm import get_embedding_model, get_llm_by_type
 from src.prompts.kg.prompts import *
 from src.tools.search import get_web_search_tool
+
+
+def _ensure_query_concept(query, default_concept):
+    concept_name = getattr(query, "concept_name", None) or default_concept
+    query.concept_name = concept_name
+    return concept_name
+
+
+def _normalize_research_url(
+    url_obj: str | ResearchUrl, *, default_concept: str
+) -> ResearchUrl:
+    if isinstance(url_obj, ResearchUrl):
+        return ResearchUrl(
+            url=url_obj.url,
+            concept_name=url_obj.concept_name or default_concept,
+        )
+    return ResearchUrl(url=url_obj, concept_name=default_concept)
+
+
+def _infer_candidate_from_query(
+    query_text: str, candidate_names: List[str]
+) -> Optional[str]:
+    lowered = query_text.lower()
+    for name in candidate_names:
+        if name.lower() in lowered:
+            return name
+    return None
 
 
 # Node implementations
@@ -87,6 +116,9 @@ def initial_research_plan(state: ConceptResearchState, config: RunnableConfig) -
         action_plan = llm_with_retry(llm, ProfileResearchAction, llm_messages)
         # Get the queries not already in the query list
         queries = action_plan.queries[: configurable.max_search_queries]
+        for query in queries:
+            _ensure_query_concept(query, concept.name)
+        action_plan.queries = queries
         queries_str = to_yaml(queries)
         # Only return incremental messages; LangGraph reducer will merge into state
         messages = make_message_entry(
@@ -129,10 +161,32 @@ def route_after_action(
     if not queries and not urls:
         return "collect_research"
     sends = []
+    default_phase = state.research_mode or "profile"
+    default_concept = state.concept.name
     for query in queries[: configurable.max_search_queries * 2]:
-        sends.append(Send("web_search", WebSearchState(query=query)))
-    for url in urls[: configurable.max_extract_urls * 2]:
-        sends.append(Send("content_extractor", ContentExtractState(url=url)))
+        concept_name = _ensure_query_concept(query, default_concept)
+        sends.append(
+            Send(
+                "web_search",
+                WebSearchState(
+                    query=query, phase=default_phase, concept_name=concept_name
+                ),
+            )
+        )
+    for url_obj in urls[: configurable.max_extract_urls * 2]:
+        normalized_url = _normalize_research_url(
+            url_obj, default_concept=default_concept
+        )
+        sends.append(
+            Send(
+                "content_extractor",
+                ContentExtractState(
+                    url=normalized_url.url,
+                    phase=default_phase,
+                    concept_name=normalized_url.concept_name or default_concept,
+                ),
+            )
+        )
     return sends
 
 
@@ -167,9 +221,19 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
             "search_results",
             [AIMessage(content=format_message("search_results", output_str))],
         )
+        concept_name = state.concept_name or getattr(state.query, "concept_name", None)
+        if not concept_name:
+            concept_name = state.query.query
+        research_index = ResearchIndex.make_entry(
+            phase=state.phase,
+            concept_name=concept_name,
+            messages=messages,
+            research_results=[research_output],
+        )
         return {
             "messages": messages,
             "research_results": [research_output],
+            "research_index": research_index,
         }
 
     except Exception as e:
@@ -203,10 +267,19 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
                 )
             ],
         )
+        concept_name = state.concept_name or state.url
+        research_index = ResearchIndex.make_entry(
+            phase=state.phase,
+            concept_name=concept_name,
+            messages=messages,
+            extract_results=[source],
+            url_list=[state.url],
+        )
         return {
             "messages": messages,
             "url_list": [state.url],
             "extract_results": [source],
+            "research_index": research_index,
         }
 
     except Exception as e:
@@ -435,17 +508,23 @@ def action_profile(state: ConceptResearchState, config: RunnableConfig) -> dict:
 
         # Flatten the list of ProfileResearchAction items into a single action
         # so that ConceptResearchState.action_plan is always a single object.
-        all_queries = [
-            query for plan in profile_action_plan.action_plan for query in plan.queries
-        ]
-        all_urls: List[str] = []
+        all_queries = []
+        all_urls: List[ResearchUrl] = []
         for plan in profile_action_plan.action_plan:
-            if getattr(plan, "urls", None):
-                all_urls.extend(plan.urls)
+            for query in getattr(plan, "queries", []):
+                _ensure_query_concept(query, state.concept.name)
+                all_queries.append(query)
+            for url_obj in getattr(plan, "urls", []):
+                all_urls.append(
+                    _normalize_research_url(
+                        url_obj,
+                        default_concept=state.concept.name,
+                    )
+                )
 
         combined_action = ProfileResearchAction(
             queries=all_queries,
-            urls=all_urls or None,
+            urls=all_urls,
         )
 
         return {
@@ -544,10 +623,12 @@ def _get_improved_prerequisites(
         pendings_str=to_yaml(pending),
         excludes_str="\n".join(excluded_cands),
     )
+    target_names = [profile.concept.name for profile in pending.values()]
+    scoped_context = state.research_index.collect_messages(
+        "prerequisites", target_names
+    )
     llm_messages = prepare_llm_messages(
-        state.messages,
-        [HumanMessage(content=improved_prereq_prompt)],
-        message_store,
+        state.messages, [HumanMessage(content=improved_prereq_prompt)], scoped_context
     )
 
     try:
@@ -608,7 +689,7 @@ def _get_external_prerequisites(
     llm_messages = prepare_llm_messages(
         state.messages,
         [HumanMessage(content=external_prereq_prompt)],
-        message_store,
+        state.research_index.collect_messages("prerequisites", [state.concept.name]),
     )
     try:
         external_candidates = (
@@ -649,7 +730,7 @@ def _organize_prerequisites(
     llm,
     prerequisite_state: ConceptPrerequisiteState,
     message_store: MessageStore,
-) -> tuple[ConceptPrerequisiteState, MessageStore]:
+) -> tuple[ConceptPrerequisiteState, MessageStore, ResearchIndex]:
     """Helper: organize raw prerequisite candidates into canonical concepts."""
     raw_existing = getattr(prerequisite_state, "raw_existing", []) or []
     raw_improved = getattr(prerequisite_state, "raw_improved", []) or []
@@ -661,7 +742,7 @@ def _organize_prerequisites(
         prerequisite_state.existing = []
         prerequisite_state.improved = []
         prerequisite_state.external = []
-        return prerequisite_state, message_store
+        return prerequisite_state, message_store, ResearchIndex()
 
     # Build a lightweight view for the LLM, annotated with origin.
     payload = []
@@ -693,6 +774,7 @@ def _organize_prerequisites(
         message_store,
     )
 
+    index_updates = ResearchIndex()
     try:
         taxonomy = llm_with_retry(llm, CanonicalPrerequisites, llm_messages)
         canonical_units = taxonomy.canonical_prerequisites or []
@@ -740,7 +822,17 @@ def _organize_prerequisites(
             ),
         )
 
-    return prerequisite_state, message_store
+        for unit in canonical_units:
+            source_candidates = getattr(unit, "source_candidates", []) or []
+            if source_candidates:
+                index_updates.merge_concepts(
+                    phase="prerequisites",
+                    target_name=unit.name,
+                    source_names=source_candidates,
+                    existing_index=state.research_index,
+                )
+
+    return prerequisite_state, message_store, index_updates
 
 
 def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> dict:
@@ -799,7 +891,7 @@ def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -
     )
 
     # 4. Organize raw candidates into canonical prerequisite concepts.
-    prerequisite_state, message_store = _organize_prerequisites(
+    prerequisite_state, message_store, index_updates = _organize_prerequisites(
         state,
         configurable,
         llm,
@@ -807,10 +899,13 @@ def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -
         message_store,
     )
 
-    return {
+    result = {
         "messages": message_store,
         "prerequisites": prerequisite_state,
     }
+    if index_updates:
+        result["research_index"] = index_updates
+    return result
 
 
 def _evaluate_prerequisite_candidates(
@@ -1096,27 +1191,76 @@ def action_prerequisites(state: ConceptResearchState, config: RunnableConfig) ->
 
         # Flatten refinement and expansion actions into a single PrerequisiteResearchAction
         # so that ConceptResearchState.action_plan is always a single object.
+        prerequisite_state = state.prerequisites or ConceptPrerequisiteState()
+        canonical_candidates = [
+            cand.name
+            for bucket in (
+                getattr(prerequisite_state, "existing", []),
+                getattr(prerequisite_state, "improved", []),
+                getattr(prerequisite_state, "external", []),
+            )
+            for cand in (bucket or [])
+        ]
+
+        def resolve_concept_for_query(query_obj, is_refinement: bool) -> str:
+            if not is_refinement:
+                return state.concept.name
+            concept_name = getattr(query_obj, "concept_name", None)
+            if concept_name:
+                return concept_name
+            inferred = _infer_candidate_from_query(
+                query_obj.query, canonical_candidates
+            )
+            return inferred or state.concept.name
+
+        def resolve_concept_for_url(url_obj, is_refinement: bool) -> str:
+            if isinstance(url_obj, ResearchUrl) and url_obj.concept_name:
+                return url_obj.concept_name
+            if not is_refinement:
+                return state.concept.name
+            raw_value = url_obj.url if isinstance(url_obj, ResearchUrl) else url_obj
+            needle = raw_value or ""
+            inferred = _infer_candidate_from_query(needle, canonical_candidates)
+            return inferred or state.concept.name
+
+        def ingest_queries(action, *, is_refinement: bool, accumulator: list):
+            if not action:
+                return
+            for query in getattr(action, "queries", []):
+                concept_target = resolve_concept_for_query(query, is_refinement)
+                _ensure_query_concept(query, concept_target)
+                accumulator.append(query)
+
+        def ingest_urls(action, *, is_refinement: bool, accumulator: list):
+            if not action:
+                return
+            for url_obj in getattr(action, "urls", []):
+                concept_target = resolve_concept_for_url(url_obj, is_refinement)
+                accumulator.append(
+                    _normalize_research_url(
+                        url_obj,
+                        default_concept=concept_target,
+                    )
+                )
+
         all_queries = []
-        all_urls: List[str] = []
-
-        if plan.refinement_action is not None:
-            all_queries.extend(plan.refinement_action.queries)
-            if getattr(plan.refinement_action, "urls", None):
-                all_urls.extend(plan.refinement_action.urls)
-
-        if plan.expansion_action is not None:
-            all_queries.extend(plan.expansion_action.queries)
-            if getattr(plan.expansion_action, "urls", None):
-                all_urls.extend(plan.expansion_action.urls)
+        all_urls: List[ResearchUrl] = []
+        ingest_queries(
+            plan.refinement_action, is_refinement=True, accumulator=all_queries
+        )
+        ingest_queries(
+            plan.expansion_action, is_refinement=False, accumulator=all_queries
+        )
+        ingest_urls(plan.refinement_action, is_refinement=True, accumulator=all_urls)
+        ingest_urls(plan.expansion_action, is_refinement=False, accumulator=all_urls)
 
         # Respect configured hard limits as a final safety check.
         all_queries = all_queries[: configurable.max_search_queries * 2]
-        if all_urls:
-            all_urls = all_urls[: configurable.max_extract_urls * 2]
+        all_urls = all_urls[: configurable.max_extract_urls * 2]
 
         combined_action = PrerequisiteResearchAction(
             queries=all_queries,
-            urls=all_urls or [],
+            urls=all_urls,
         )
 
         return {

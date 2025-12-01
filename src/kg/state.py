@@ -1,8 +1,9 @@
 """State definitions for the concept research LangGraph agent."""
 
 import operator
+from copy import deepcopy
 from math import e
-from typing import Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
 
 import yaml
 from langchain_core.messages import SystemMessage
@@ -37,6 +38,255 @@ from src.kg.utils import get_current_date
 from src.prompts.kg.prompts import system_message_research
 
 
+def _normalize_phase(phase: Optional[str]) -> str:
+    if (phase or "").lower() not in {"profile", "prerequisites"}:
+        return "profile"
+    return (phase or "profile").lower()
+
+
+def _normalize_concept_name(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    return name.strip().lower()
+
+
+class ConceptResearchBucket(BaseModel):
+    """Stores research artifacts for a single phase/concept combination."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    display_name: Optional[str] = None
+    messages: MessageStore = Field(default_factory=MessageStore)
+    research_results: List[ResearchOutput] = Field(default_factory=list)
+    extract_results: List[ResearchSource] = Field(default_factory=list)
+    url_list: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ensure_message_store(cls, data):
+        if isinstance(data, dict) and "messages" in data:
+            data = data.copy()
+            data["messages"] = MessageStore.ensure(data["messages"])
+        return data
+
+    def append(
+        self,
+        *,
+        messages: MessageStore | dict | None = None,
+        research_results: Optional[List[ResearchOutput]] = None,
+        extract_results: Optional[List[ResearchSource]] = None,
+        url_list: Optional[List[str]] = None,
+    ) -> None:
+        if messages:
+            self.messages = merge_message_histories(self.messages, messages)
+        if research_results:
+            self.research_results.extend(deepcopy(research_results))
+        if extract_results:
+            self.extract_results.extend(deepcopy(extract_results))
+        if url_list:
+            self.url_list.extend(list(url_list))
+
+    def merge_in_place(self, other: "ConceptResearchBucket") -> None:
+        self.append(
+            messages=other.messages,
+            research_results=other.research_results,
+            extract_results=other.extract_results,
+            url_list=other.url_list,
+        )
+
+    def copy(self) -> "ConceptResearchBucket":
+        dup = ConceptResearchBucket(display_name=self.display_name)
+        dup.append(
+            messages=self.messages,
+            research_results=self.research_results,
+            extract_results=self.extract_results,
+            url_list=self.url_list,
+        )
+        return dup
+
+
+class ResearchIndex(BaseModel):
+    """Tracks research outputs scoped by phase and concept."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    buckets: Dict[str, Dict[str, ConceptResearchBucket]] = Field(default_factory=dict)
+    removals: List[Tuple[str, str]] = Field(default_factory=list)
+
+    def __bool__(self) -> bool:  # pragma: no cover - convenience
+        return bool(self.buckets or self.removals)
+
+    @staticmethod
+    def ensure(value: "ResearchIndex | dict | None") -> "ResearchIndex":
+        if isinstance(value, ResearchIndex):
+            return value
+        if value is None:
+            return ResearchIndex()
+        if isinstance(value, dict):
+            buckets: Dict[str, Dict[str, ConceptResearchBucket]] = {}
+            for phase, phase_bucket in value.get("buckets", {}).items():
+                buckets[phase] = {}
+                for concept, bucket in phase_bucket.items():
+                    if isinstance(bucket, ConceptResearchBucket):
+                        buckets[phase][concept] = bucket.copy()
+                    else:
+                        buckets[phase][concept] = ConceptResearchBucket(**bucket)
+            removals = [tuple(removal) for removal in value.get("removals", [])]
+            return ResearchIndex(buckets=buckets, removals=removals)
+        raise TypeError(f"Unsupported research index payload: {type(value)!r}")
+
+    def copy(self) -> "ResearchIndex":
+        duplicate = ResearchIndex()
+        for phase, phase_bucket in self.buckets.items():
+            duplicate_phase = {}
+            for concept, bucket in phase_bucket.items():
+                duplicate_phase[concept] = bucket.copy()
+            duplicate.buckets[phase] = duplicate_phase
+        duplicate.removals = list(self.removals)
+        return duplicate
+
+    def merge_with(self, other: "ResearchIndex | dict | None") -> "ResearchIndex":
+        merged = self.copy()
+        merged._merge_inplace(other)
+        return merged
+
+    def _merge_inplace(self, other: "ResearchIndex | dict | None") -> None:
+        other_index = ResearchIndex.ensure(other)
+        for phase, concept in other_index.removals:
+            self._remove_bucket(phase, concept)
+        for phase, phase_bucket in other_index.buckets.items():
+            dest = self.buckets.setdefault(phase, {})
+            for concept, bucket in phase_bucket.items():
+                if concept in dest:
+                    dest[concept].merge_in_place(bucket)
+                else:
+                    dest[concept] = bucket.copy()
+
+    def _remove_bucket(self, phase: str, concept_name: str) -> None:
+        phase_key = _normalize_phase(phase)
+        concept_key = _normalize_concept_name(concept_name)
+        if concept_key is None:
+            return
+        if phase_key in self.buckets:
+            self.buckets[phase_key].pop(concept_key, None)
+
+    def append_entry(
+        self,
+        *,
+        phase: str,
+        concept_name: str,
+        messages: MessageStore | dict | None = None,
+        research_results: Optional[List[ResearchOutput]] = None,
+        extract_results: Optional[List[ResearchSource]] = None,
+        url_list: Optional[List[str]] = None,
+    ) -> None:
+        phase_key = _normalize_phase(phase)
+        concept_key = _normalize_concept_name(concept_name) or concept_name
+        if not concept_key:
+            return
+        phase_bucket = self.buckets.setdefault(phase_key, {})
+        bucket = phase_bucket.setdefault(
+            concept_key, ConceptResearchBucket(display_name=concept_name)
+        )
+        bucket.append(
+            messages=messages,
+            research_results=research_results,
+            extract_results=extract_results,
+            url_list=url_list,
+        )
+
+    def collect_messages(
+        self, phase: str, concept_names: Optional[Iterable[str]] = None
+    ) -> MessageStore:
+        phase_key = _normalize_phase(phase)
+        targets = (
+            {(_normalize_concept_name(name) or name) for name in concept_names}
+            if concept_names
+            else None
+        )
+        aggregate = MessageStore()
+        phase_bucket = self.buckets.get(phase_key, {})
+        for concept_key, bucket in phase_bucket.items():
+            if targets is not None and concept_key not in targets:
+                continue
+            aggregate = merge_message_histories(aggregate, bucket.messages)
+        return aggregate
+
+    def gather_bucket(
+        self, phase: str, concept_name: str
+    ) -> Optional[ConceptResearchBucket]:
+        phase_key = _normalize_phase(phase)
+        concept_key = _normalize_concept_name(concept_name)
+        if concept_key is None:
+            return None
+        return self.buckets.get(phase_key, {}).get(concept_key)
+
+    def merge_concepts(
+        self,
+        *,
+        phase: str,
+        target_name: str,
+        source_names: List[str],
+        existing_index: "ResearchIndex",
+    ) -> None:
+        phase_key = _normalize_phase(phase)
+        target_bucket = ConceptResearchBucket(display_name=target_name)
+        seen: Set[str] = set()
+        for name in source_names + [target_name]:
+            normalized = _normalize_concept_name(name)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            bucket = existing_index.gather_bucket(phase_key, normalized)
+            if bucket:
+                target_bucket.merge_in_place(bucket)
+            if name != target_name and normalized:
+                self.removals.append((phase_key, normalized))
+        if (
+            target_bucket.messages
+            or target_bucket.research_results
+            or target_bucket.extract_results
+            or target_bucket.url_list
+        ):
+            self.append_entry(
+                phase=phase_key,
+                concept_name=target_name,
+                messages=target_bucket.messages,
+                research_results=target_bucket.research_results,
+                extract_results=target_bucket.extract_results,
+                url_list=target_bucket.url_list,
+            )
+
+    @classmethod
+    def make_entry(
+        cls,
+        *,
+        phase: str,
+        concept_name: str,
+        messages: MessageStore | dict | None = None,
+        research_results: Optional[List[ResearchOutput]] = None,
+        extract_results: Optional[List[ResearchSource]] = None,
+        url_list: Optional[List[str]] = None,
+    ) -> "ResearchIndex":
+        index = cls()
+        index.append_entry(
+            phase=phase,
+            concept_name=concept_name,
+            messages=messages,
+            research_results=research_results,
+            extract_results=extract_results,
+            url_list=url_list,
+        )
+        return index
+
+
+def merge_research_index(
+    existing: ResearchIndex | dict | None, new: ResearchIndex | dict | None
+) -> ResearchIndex:
+    base = ResearchIndex.ensure(existing)
+    return base.merge_with(new)
+
+
 class ConceptResearchState(BaseModel):
     """Overall state that tracks the entire research process."""
 
@@ -51,6 +301,9 @@ class ConceptResearchState(BaseModel):
     goal_context: str
     awg_context_summary: Optional[str] = None
     url_list: Annotated[List[str], operator.add] = Field(default_factory=list)
+    research_index: Annotated[ResearchIndex, merge_research_index] = Field(
+        default_factory=ResearchIndex
+    )
 
     # Control flow
     iteration_number: int = 0
@@ -122,6 +375,8 @@ class WebSearchState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     query: SearchQuery
+    phase: Literal["profile", "prerequisites"] = "profile"
+    concept_name: Optional[str] = None
     id: Optional[int] = None
 
 
@@ -131,6 +386,8 @@ class ContentExtractState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     url: str
+    phase: Literal["profile", "prerequisites"] = "profile"
+    concept_name: Optional[str] = None
     id: Optional[int] = None
 
 

@@ -141,6 +141,20 @@ class SearchQuery(BaseModel):
     negative_terms: List[str] = Field(
         default_factory=list, description="Terms to exclude from this query."
     )
+    concept_name: Optional[str] = Field(
+        default=None,
+        description="Canonical concept name whose research context this query targets.",
+    )
+
+
+class ResearchUrl(BaseModel):
+    """URL with its research context metadata."""
+
+    url: str = Field(description="URL to extract content from.")
+    concept_name: Optional[str] = Field(
+        default=None,
+        description="Canonical concept name whose research context this URL supports.",
+    )
 
 
 class ProfileResearchAction(BaseModel):
@@ -149,7 +163,7 @@ class ProfileResearchAction(BaseModel):
     queries: List[SearchQuery] = Field(
         min_length=1, description="The search queries for concept profile research."
     )
-    urls: List[str] = Field(
+    urls: List[ResearchUrl] = Field(
         default_factory=list,
         description="URLs to extract content for concept profile research.",
     )
@@ -470,7 +484,7 @@ class PrerequisiteResearchAction(BaseModel):
         min_length=1,
         description="The search queries for this prerequisite research action as per the research intent.",
     )
-    urls: List[str] = Field(
+    urls: List[ResearchUrl] = Field(
         default_factory=list,
         description="URLs to extract content for this prerequisite research action as per the research intent.",
     )

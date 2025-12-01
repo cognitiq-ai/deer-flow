@@ -55,6 +55,7 @@ Coverage goals: Aim to surface the following canonical enrichment information:
 - exemplars: one minimal worked example and one counterexample
 - difficulty: novice | intermediate | advanced
 - effort_estimate_minutes: estimated time-on-task to learn the concept at baseline depth
+- For every query, include a `concept_name` field set to the exact `<research_concept>`
 - Output only JSON. No prose or markdown.
 """
 
@@ -110,6 +111,7 @@ Rules:
 - Generate diversified follow ups (entity disambiguation, synonyms, boolean operators).
 - Generate upto {n_queries} queries and {n_urls} URLs.
 - Enforce diversity: domains, geos, doc types.
+- For every query/URL, include a `concept_name` field set to the exact `<research_concept>`
 - Output only JSON. No prose or markdown.
 """
 
@@ -416,6 +418,9 @@ Within each action:
 *   **Diversification:** Employ entity disambiguation, synonyms, and boolean operators.
 *   **Themes:** Utilize patterns such as "syllabus before X", "foundational topics of X", "curriculum outlines", "decomposition to pre-skills", and "taxonomy relations".
 *   **Operators:** Explicitly specify the expansion operators utilized.
+*   **Context Tagging:** Each query and URL must include a `concept_name` field:
+    *   For `refinement_action`, set it to the precise canonical prerequisite being refined.
+    *   For `expansion_action`, set it to `<research_concept>`.
 
 **III. Parameters & Control**
 *   **Volume:** Respect the per-action budgets described above; do not exceed `{n_queries}` queries and `{n_urls}` URLs in either `refinement_action` or `expansion_action`.
