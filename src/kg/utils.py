@@ -2,14 +2,52 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Type, TypeVar
+from typing import Any, Dict, List, Literal, Optional, Type, TypeVar
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, create_model
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 from typing_extensions import Annotated
 
 from src.kg.models import ConceptNode, RelationshipType
+
+
+def PydanticFieldLiteral(
+    base_model: Type[BaseModel],
+    field_name: str,
+    field_values: list[str],
+    field_description: Optional[str] = None,
+) -> Type[BaseModel]:
+    """
+    Creates a new Pydantic model by extending the base model with a constrained field.
+    """
+
+    # Define the new Literal type
+    DynamicFieldLiteral = Literal[*field_values]
+
+    # Prepare field definitions for create_model
+    fields = {}
+    for name, field_info in base_model.model_fields.items():
+        if name == field_name:
+            # Set the new type annotation for the status field
+            fields[name] = (
+                DynamicFieldLiteral,
+                Field(field_info.default, description=field_info.description),
+            )
+        else:
+            # Keep existing fields as they are (type, default/required field_name)
+            fields[name] = (
+                field_info.annotation,
+                Field(field_info.default, description=field_info.description),
+            )
+    # Create new field if does not exist
+    if field_name not in fields:
+        fields[field_name] = (
+            DynamicFieldLiteral,
+            Field(..., description=field_description),
+        )
+
+    return create_model(base_model.__name__, **fields)  # type: ignore[no-any-return]
 
 
 def PydanticEnum(enum_cls: Type[Enum]):

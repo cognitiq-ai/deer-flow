@@ -166,34 +166,6 @@ class ResearchOutput(BaseModel):
         return yaml.dump(self.model_dump(), sort_keys=False)
 
 
-class ConsolidatedResearchOutput(BaseModel):
-    """
-    Represents the consolidated research output.
-    """
-
-    queries_answers: List[ResearchQA] = Field(default_factory=list)
-    sources: List[ResearchSource] = Field(default_factory=list)
-
-    def merge(self, other: ResearchOutput) -> None:
-        """
-        Merge a research output into this one.
-        Remaps other's answer citations into its sources.
-        """
-        self.queries_answers.append(other.query_result_summary)
-        self.sources = list(set(self.sources).union(set(other.sources)))
-
-    def update_sources(self, source: ResearchSource) -> None:
-        """
-        Update the sources of the research output.
-        """
-        for s in self.sources:
-            if s.url == source.url:
-                s.merge(source)
-                return
-
-        self.sources.append(source)
-
-
 class ConceptNode(BaseModel):
     """
     Represents a concept node in the knowledge graph.
@@ -247,6 +219,13 @@ class ConceptNode(BaseModel):
         Return the confidence of the concept.
         """
         return self.definition_confidence_llm
+
+    @property
+    def description(self) -> str:
+        """
+        Return the description of the concept.
+        """
+        return self.definition or ""
 
     @property
     def definition_research_yaml(self) -> str:

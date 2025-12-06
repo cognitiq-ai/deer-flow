@@ -3,8 +3,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-import yaml
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RunnableConfig, Send
 from pydantic import ValidationError
@@ -36,7 +35,9 @@ from src.kg.schemas import (
     PrerequisiteCandidateEvaluationBatch,
     PrerequisiteEvaluation,
     PrerequisiteGlobalSignals,
+    PrerequisiteRejectionReason,
     PrerequisiteResearchAction,
+    PrerequisiteType,
     ProfileActionPlan,
     ProfileResearchAction,
     ResearchUrl,
@@ -48,10 +49,13 @@ from src.kg.state import (
     ContentExtractState,
     InferRelationshipsState,
     InferRelationshipState,
+    PrerequisiteProfile,
+    ResearchActionState,
     ResearchIndex,
     WebSearchState,
 )
 from src.kg.utils import (
+    PydanticFieldLiteral,
     format_message,
     get_research_concept,
     llm_with_retry,
@@ -69,15 +73,11 @@ def _ensure_query_concept(query, default_concept):
     return concept_name
 
 
-def _normalize_research_url(
-    url_obj: str | ResearchUrl, *, default_concept: str
-) -> ResearchUrl:
-    if isinstance(url_obj, ResearchUrl):
-        return ResearchUrl(
-            url=url_obj.url,
-            concept_name=url_obj.concept_name or default_concept,
-        )
-    return ResearchUrl(url=url_obj, concept_name=default_concept)
+def _normalize_research_url(url_obj: ResearchUrl, default_concept: str) -> ResearchUrl:
+    return ResearchUrl(
+        url=url_obj.url,
+        concept_name=url_obj.concept_name or default_concept,
+    )
 
 
 def _infer_candidate_from_query(
@@ -113,38 +113,31 @@ def initial_research_plan(state: ConceptResearchState, config: RunnableConfig) -
     )
     try:
         # Generate the search queries with retry
-        action_plan = llm_with_retry(llm, ProfileResearchAction, llm_messages)
+        action = llm_with_retry(llm, ProfileResearchAction, llm_messages)
         # Get the queries not already in the query list
-        queries = action_plan.queries[: configurable.max_search_queries]
+        queries = action.queries[: configurable.max_search_queries]
         for query in queries:
             _ensure_query_concept(query, concept.name)
-        action_plan.queries = queries
-        queries_str = to_yaml(queries)
+        action.queries = queries
         # Only return incremental messages; LangGraph reducer will merge into state
         messages = make_message_entry(
-            "initial_research_plan",
+            "action_profile",
             "plan_generation",
-            [
-                HumanMessage(content=formatted_prompt),
-                AIMessage(content=format_message("generated_queries", queries_str)),
-            ],
+            [HumanMessage(content=formatted_prompt)],
         )
-        return {
-            "messages": messages,
-            "action_plan": action_plan,
-        }
+        action_plan = ResearchActionState(
+            node_key=("action_profile", "plan_generation"),
+            action=action,
+        )
+        return {"messages": messages, "action_plans": [action_plan]}
     except Exception as e:
         error_messages = make_message_entry(
-            "initial_research_plan",
+            "action_profile",
             "plan_generation_error",
-            [
-                HumanMessage(content=formatted_prompt),
-                AIMessage(content=f"Error: {e}"),
-            ],
+            [HumanMessage(content=formatted_prompt), AIMessage(content=f"Error: {e}")],
         )
         return {
             "messages": error_messages,
-            "action_plan": None,
         }
 
 
@@ -155,38 +148,45 @@ def route_after_action(
     LangGraph routing function that determines next step after action plan.
     """
     configurable = Configuration.from_runnable_config(config)
-    # Check parameters and exit conditions
-    queries = getattr(state.action_plan, "queries", []) or []
-    urls = getattr(state.action_plan, "urls", []) or []
-    if not queries and not urls:
-        return "collect_research"
-    sends = []
+
     default_phase = state.research_mode or "profile"
     default_concept = state.concept.name
-    for query in queries[: configurable.max_search_queries * 2]:
-        concept_name = _ensure_query_concept(query, default_concept)
-        sends.append(
-            Send(
-                "web_search",
-                WebSearchState(
-                    query=query, phase=default_phase, concept_name=concept_name
-                ),
+    sends = []
+    # Check parameters and exit conditions
+    for action_plan in state.action_plans:
+        queries = action_plan.action.queries
+        urls = action_plan.action.urls
+        for query in queries[: configurable.max_search_queries]:
+            concept_name = _ensure_query_concept(query, default_concept)
+            sends.append(
+                Send(
+                    "web_search",
+                    WebSearchState(
+                        query=query,
+                        node_key=action_plan.node_key,
+                        phase=default_phase,
+                        concept_name=concept_name,
+                    ),
+                )
             )
-        )
-    for url_obj in urls[: configurable.max_extract_urls * 2]:
-        normalized_url = _normalize_research_url(
-            url_obj, default_concept=default_concept
-        )
-        sends.append(
-            Send(
-                "content_extractor",
-                ContentExtractState(
-                    url=normalized_url.url,
-                    phase=default_phase,
-                    concept_name=normalized_url.concept_name or default_concept,
-                ),
+        for url_obj in urls[: configurable.max_extract_urls]:
+            normalized_url = _normalize_research_url(
+                url_obj, default_concept=default_concept
             )
-        )
+            sends.append(
+                Send(
+                    "content_extractor",
+                    ContentExtractState(
+                        url=normalized_url.url,
+                        node_key=action_plan.node_key,
+                        phase=default_phase,
+                        concept_name=normalized_url.concept_name or default_concept,
+                    ),
+                )
+            )
+    if not sends:
+        return "collect_research"
+
     return sends
 
 
@@ -216,9 +216,10 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
             ],
         )
         output_str = to_yaml(research_output)
+        node, key = state.node_key
         messages = make_message_entry(
-            "web_search",
-            "search_results",
+            node,
+            key,
             [AIMessage(content=format_message("search_results", output_str))],
         )
         concept_name = state.concept_name or getattr(state.query, "concept_name", None)
@@ -232,18 +233,16 @@ def web_search(state: WebSearchState, config: RunnableConfig) -> dict:
         )
         return {
             "messages": messages,
-            "research_results": [research_output],
             "research_index": research_index,
         }
 
     except Exception as e:
         return {
             "messages": make_message_entry(
-                "web_search",
-                "search_error",
+                node,
+                key,
                 [AIMessage(content=f"Error: {e}")],
             ),
-            "research_results": [],
         }
 
 
@@ -255,12 +254,13 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
         # Extract content from URL
         article = Crawler().crawl(state.url)
         source = ResearchSource(
-            url=article.url, title=article.title, content=article.content
+            url=state.url, title=article.title, content=article.content
         )
         output_str = to_yaml(source)
+        node, key = state.node_key
         messages = make_message_entry(
-            "content_extractor",
-            "content_extraction",
+            node,
+            key,
             [
                 AIMessage(
                     content=format_message("content_extraction_results", output_str)
@@ -273,11 +273,9 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
             concept_name=concept_name,
             messages=messages,
             extract_results=[source],
-            url_list=[state.url],
         )
         return {
             "messages": messages,
-            "url_list": [state.url],
             "extract_results": [source],
             "research_index": research_index,
         }
@@ -285,11 +283,10 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
     except Exception as e:
         return {
             "messages": make_message_entry(
-                "content_extractor",
-                "content_extraction_error",
+                node,
+                key,
                 [AIMessage(content=f"Error: {e}")],
             ),
-            "url_list": [state.url],
             "extract_results": [],
         }
 
@@ -489,18 +486,16 @@ def action_profile(state: ConceptResearchState, config: RunnableConfig) -> dict:
         state.messages, [HumanMessage(content=formatted_action)]
     )
     try:
-        profile_action_plan = llm_with_retry(llm, ProfileActionPlan, llm_messages)
-        output_str = to_yaml(profile_action_plan)
+        action = llm_with_retry(llm, ProfileActionPlan, llm_messages)
         # Only return incremental messages
         messages = make_message_entry(
             "action_profile",
-            "profile_action_plan",
+            "plan_generation",
             [
                 HumanMessage(content=formatted_action),
                 AIMessage(
                     content=format_message(
-                        "concept_profile_action_plan",
-                        output_str,
+                        "concept_profile_action_plan", action.knowledge_summary
                     )
                 ),
             ],
@@ -510,32 +505,29 @@ def action_profile(state: ConceptResearchState, config: RunnableConfig) -> dict:
         # so that ConceptResearchState.action_plan is always a single object.
         all_queries = []
         all_urls: List[ResearchUrl] = []
-        for plan in profile_action_plan.action_plan:
-            for query in getattr(plan, "queries", []):
-                _ensure_query_concept(query, state.concept.name)
-                all_queries.append(query)
-            for url_obj in getattr(plan, "urls", []):
-                all_urls.append(
-                    _normalize_research_url(
-                        url_obj,
-                        default_concept=state.concept.name,
-                    )
-                )
+        for query in action.action_plan.queries:
+            _ensure_query_concept(query, state.concept.name)
+            all_queries.append(query)
+        for url_obj in action.action_plan.urls:
+            all_urls.append(_normalize_research_url(url_obj, state.concept.name))
 
-        combined_action = ProfileResearchAction(
-            queries=all_queries,
-            urls=all_urls,
+        action_plans = ResearchActionState(
+            node_key=("action_profile", "plan_generation"),
+            action=ProfileResearchAction(
+                queries=all_queries,
+                urls=all_urls,
+            ),
         )
 
         return {
             "messages": messages,
-            "action_plan": combined_action,
+            "action_plans": [action_plans],
         }
     except Exception as e:
         return {
             "messages": make_message_entry(
                 "action_profile",
-                "profile_action_plan_error",
+                "plan_generation_error",
                 [AIMessage(content=f"Error: {e}")],
             ),
         }
@@ -547,19 +539,19 @@ def _get_existing_prerequisites(
     llm,
     prerequisite_state: ConceptPrerequisiteState,
     message_store: MessageStore,
-    excluded_cands: set[str],
-) -> tuple[ConceptPrerequisiteState, MessageStore, set[str]]:
+) -> tuple[ConceptPrerequisiteState, MessageStore]:
     """Helper: propose existing prerequisite candidates from AWG context."""
+
     prior_existing = state.awg_context.get_target_candidates(
         state.concept, RelationshipType.HAS_PREREQUISITE
     )
     if not prior_existing:
-        return prerequisite_state, message_store, excluded_cands
+        return prerequisite_state, message_store
 
     existing_prereq_prompt = existing_prerequisites_instructions.format(
         research_concept=get_research_concept(state.concept, state.goal_context),
         existing_concepts_str=to_yaml(
-            state.awg_context.get_definitions(prior_existing, char_limit=300)
+            state.awg_context.get_definitions(prior_existing, char_limit=500)
         ),
     )
     llm_messages = prepare_llm_messages(
@@ -569,7 +561,12 @@ def _get_existing_prerequisites(
     )
     try:
         existing_candidates = (
-            llm_with_retry(llm, CandidatePrerequisites, llm_messages).candidates or []
+            llm_with_retry(
+                llm,
+                PydanticFieldLiteral(CanonicalPrerequisites, "origin", ["existing"]),
+                llm_messages,
+            ).candidates
+            or []
         )
         output_str = to_yaml(existing_candidates)
         message_store = merge_message_histories(
@@ -585,11 +582,15 @@ def _get_existing_prerequisites(
                 ],
             ),
         )
-        # Store raw discovery candidates; canonical concepts are synthesized later.
-        prerequisite_state.raw_existing = existing_candidates
-        excluded_cands = excluded_cands.union(
-            set(map(lambda x: x.name.lower(), existing_candidates))
+        # Store synthesised canonical concepts
+        prerequisite_state.queued.update(
+            [
+                PrerequisiteProfile(concept=candidate)
+                for candidate in existing_candidates
+            ]
         )
+        prerequisite_state.existing_done = True
+
     except Exception as e:  # noqa: BLE001
         message_store = merge_message_histories(
             message_store,
@@ -602,7 +603,7 @@ def _get_existing_prerequisites(
             ),
         )
 
-    return prerequisite_state, message_store, excluded_cands
+    return prerequisite_state, message_store
 
 
 def _get_improved_prerequisites(
@@ -611,17 +612,16 @@ def _get_improved_prerequisites(
     llm,
     prerequisite_state: ConceptPrerequisiteState,
     message_store: MessageStore,
-    excluded_cands: set[str],
-) -> tuple[ConceptPrerequisiteState, MessageStore, set[str]]:
+) -> tuple[ConceptPrerequisiteState, MessageStore]:
     """Helper: refine/evaluate pending prerequisite candidates."""
     pending = getattr(prerequisite_state, "pending", None)
     if not pending:
-        return prerequisite_state, message_store, excluded_cands
+        return prerequisite_state, message_store
 
     improved_prereq_prompt = improve_prerequisites_instructions.format(
         research_concept=get_research_concept(state.concept, state.goal_context),
         pendings_str=to_yaml(pending),
-        excludes_str="\n".join(excluded_cands),
+        excludes_str=to_yaml(prerequisite_state.excludes),
     )
     target_names = [profile.concept.name for profile in pending.values()]
     scoped_context = state.research_index.collect_messages(
@@ -651,9 +651,6 @@ def _get_improved_prerequisites(
         )
         # Store raw discovery candidates; canonical concepts are synthesized later.
         prerequisite_state.raw_improved = improved_candidates
-        excluded_cands = excluded_cands.union(
-            set(map(lambda x: x.name.lower(), improved_candidates))
-        )
     except Exception as e:  # noqa: BLE001
         message_store = merge_message_histories(
             message_store,
@@ -664,7 +661,7 @@ def _get_improved_prerequisites(
             ),
         )
 
-    return prerequisite_state, message_store, excluded_cands
+    return prerequisite_state, message_store
 
 
 def _get_external_prerequisites(
@@ -681,15 +678,70 @@ def _get_external_prerequisites(
         "coverage_gap",
         "Not yet identified",
     )
+    prereq_types_str = to_yaml([ptype.value for ptype in PrerequisiteType])
+    rejection_reasons_str = to_yaml(
+        [reason.value for reason in PrerequisiteRejectionReason]
+    )
     external_prereq_prompt = external_prerequisites_instructions.format(
         research_concept=get_research_concept(state.concept, state.goal_context),
         coverage_gap=coverage_gap,
         excludes_str="\n".join(excluded_cands),
+        prerequisite_types_str=prereq_types_str,
+        rejection_reasons_str=rejection_reasons_str,
     )
+
+    # Curate the minimal context for this call:
+    base_messages = MessageStore.ensure(state.messages)
+    curated_context = MessageStore()
+
+    # Keep any system messages so the research persona/instructions persist.
+    system_bucket = base_messages.data.get("system", {})
+    for call_id, sys_messages in system_bucket.items():
+        curated_context = merge_message_histories(
+            curated_context, make_message_entry("system", call_id, sys_messages)
+        )
+
+    # Append the concept profile output (AIMessage from profile generation).
+    profile_msgs = base_messages.data.get("propose_profile", {}).get(
+        "profile_generation", []
+    )
+    if profile_msgs:
+        # Use only the final AI profile output (canonical profile).
+        ai_only = [msg for msg in profile_msgs if msg.type == "ai"][-1:]
+        curated_context = merge_message_histories(
+            curated_context,
+            make_message_entry("propose_profile", "profile_generation", ai_only or []),
+        )
+
+    # Append the latest prerequisite global evaluation (gap signals).
+    global_eval_msgs = base_messages.data.get("evaluate_prerequisites", {}).get(
+        "global_evaluation", []
+    )
+    if global_eval_msgs:
+        ai_only = [msg for msg in global_eval_msgs if msg.type == "ai"][-1:]
+        curated_context = merge_message_histories(
+            curated_context,
+            make_message_entry(
+                "evaluate_prerequisites", "global_evaluation", ai_only or []
+            ),
+        )
+
+    # Append latest prerequisite action plan (what was just asked to research).
+    action_plan_msgs = base_messages.data.get("action_prerequisites", {}).get(
+        "prerequisite_expansion", []
+    )
+    if action_plan_msgs:
+        ai_only = [msg for msg in action_plan_msgs if msg.type == "ai"][-1:]
+        curated_context = merge_message_histories(
+            curated_context,
+            make_message_entry(
+                "action_prerequisites", "prerequisite_expansion", ai_only or []
+            ),
+        )
+
     llm_messages = prepare_llm_messages(
-        state.messages,
+        curated_context,
         [HumanMessage(content=external_prereq_prompt)],
-        state.research_index.collect_messages("prerequisites", [state.concept.name]),
     )
     try:
         external_candidates = (
@@ -777,7 +829,7 @@ def _organize_prerequisites(
     index_updates = ResearchIndex()
     try:
         taxonomy = llm_with_retry(llm, CanonicalPrerequisites, llm_messages)
-        canonical_units = taxonomy.canonical_prerequisites or []
+        canonical_units = taxonomy.candidates or []
 
         # Reset canonical buckets.
         prerequisite_state.existing = []
@@ -848,36 +900,33 @@ def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -
     message_store: MessageStore = MessageStore()
     # Prerequisite state
     prerequisite_state = getattr(state, "prerequisites") or ConceptPrerequisiteState()
-    # Existing confirmed prerequisite
-    existing_prereqs = state.awg_context.get_target_neighbors(
-        state.concept.id, RelationshipType.HAS_PREREQUISITE
-    )
-    # Build exclusion set
-    excluded_cands = (
-        set(prerequisite_state.accepts.keys())
-        .union(set(prerequisite_state.rejects.keys()))
-        .union(set(map(lambda x: x.name.lower(), existing_prereqs)))
+    # Existing confirmed prerequisites
+    prerequisite_state.confirms.update(
+        [
+            PrerequisiteProfile(concept=candidate)
+            for candidate in state.awg_context.get_target_neighbors(
+                state.concept.id, RelationshipType.HAS_PREREQUISITE
+            )
+        ]
     )
 
     # 1. Get existing prerequisites (from AWG context) if we don't already have canonical ones.
-    if not getattr(state.prerequisites, "existing", None):
-        prerequisite_state, message_store, excluded_cands = _get_existing_prerequisites(
+    if not prerequisite_state.existing_done:
+        prerequisite_state, message_store = _get_existing_prerequisites(
             state,
             configurable,
             llm,
             prerequisite_state,
             message_store,
-            excluded_cands,
         )
 
     # 2. Get the improved prerequisites (refine pending candidates).
-    prerequisite_state, message_store, excluded_cands = _get_improved_prerequisites(
+    prerequisite_state, message_store = _get_improved_prerequisites(
         state,
         configurable,
         llm,
         prerequisite_state,
         message_store,
-        excluded_cands,
     )
 
     # 3. Get external prerequisites (surface new candidates from broader research).
@@ -887,7 +936,6 @@ def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -
         llm,
         prerequisite_state,
         message_store,
-        excluded_cands,
     )
 
     # 4. Organize raw candidates into canonical prerequisite concepts.
@@ -1133,20 +1181,6 @@ def evaluate_prerequisites(state: ConceptResearchState, config: RunnableConfig) 
     # Update reflection candidates/state (accepts/rejects/pending)
     prerequisite_state.update_eval(evaluation)
 
-    output_str = to_yaml(evaluation)
-    message_store = merge_message_histories(
-        message_store,
-        make_message_entry(
-            "evaluate_prerequisites",
-            "evaluation_output",
-            [
-                AIMessage(
-                    content=format_message("prerequisite_evaluation_output", output_str)
-                )
-            ],
-        ),
-    )
-
     return {
         "messages": message_store,
         "iteration_number": current_iteration,
@@ -1176,21 +1210,30 @@ def action_prerequisites(state: ConceptResearchState, config: RunnableConfig) ->
     )
     try:
         plan = llm_with_retry(llm, PrerequisiteActionPlan, llm_messages)
-        output_str = to_yaml(plan)
         # Only return incremental messages
         messages = make_message_entry(
             "action_prerequisites",
-            "prerequisite_action_plan",
+            "prerequisite_refinement",
             [
                 HumanMessage(content=formatted_action),
                 AIMessage(
-                    content=format_message("prerequisite_action_plan", output_str)
+                    content=format_message(
+                        "prerequisite_action_plan", plan.knowledge_summary
+                    )
+                ),
+            ],
+        ).append(
+            "action_prerequisites",
+            "prerequisite_expansion",
+            [
+                HumanMessage(content=formatted_action),
+                AIMessage(
+                    content=format_message(
+                        "prerequisite_action_plan", plan.knowledge_summary
+                    )
                 ),
             ],
         )
-
-        # Flatten refinement and expansion actions into a single PrerequisiteResearchAction
-        # so that ConceptResearchState.action_plan is always a single object.
         prerequisite_state = state.prerequisites or ConceptPrerequisiteState()
         canonical_candidates = [
             cand.name
@@ -1223,56 +1266,55 @@ def action_prerequisites(state: ConceptResearchState, config: RunnableConfig) ->
             inferred = _infer_candidate_from_query(needle, canonical_candidates)
             return inferred or state.concept.name
 
-        def ingest_queries(action, *, is_refinement: bool, accumulator: list):
+        def ingest_queries(action, *, is_refinement: bool):
+            queries = []
             if not action:
-                return
+                return []
             for query in getattr(action, "queries", []):
                 concept_target = resolve_concept_for_query(query, is_refinement)
                 _ensure_query_concept(query, concept_target)
-                accumulator.append(query)
+                queries.append(query)
+            return queries
 
-        def ingest_urls(action, *, is_refinement: bool, accumulator: list):
+        def ingest_urls(action, *, is_refinement: bool):
+            urls = []
             if not action:
-                return
+                return []
             for url_obj in getattr(action, "urls", []):
                 concept_target = resolve_concept_for_url(url_obj, is_refinement)
-                accumulator.append(
+                urls.append(
                     _normalize_research_url(
                         url_obj,
                         default_concept=concept_target,
                     )
                 )
+            return urls
 
-        all_queries = []
-        all_urls: List[ResearchUrl] = []
-        ingest_queries(
-            plan.refinement_action, is_refinement=True, accumulator=all_queries
+        refinement = ResearchActionState(
+            node_key=("action_prerequisites", "prerequisite_refinement"),
+            action=PrerequisiteResearchAction(
+                queries=ingest_queries(plan.refinement_action, is_refinement=True),
+                urls=ingest_urls(plan.refinement_action, is_refinement=True),
+            ),
         )
-        ingest_queries(
-            plan.expansion_action, is_refinement=False, accumulator=all_queries
-        )
-        ingest_urls(plan.refinement_action, is_refinement=True, accumulator=all_urls)
-        ingest_urls(plan.expansion_action, is_refinement=False, accumulator=all_urls)
-
-        # Respect configured hard limits as a final safety check.
-        all_queries = all_queries[: configurable.max_search_queries * 2]
-        all_urls = all_urls[: configurable.max_extract_urls * 2]
-
-        combined_action = PrerequisiteResearchAction(
-            queries=all_queries,
-            urls=all_urls,
+        expansion = ResearchActionState(
+            node_key=("action_prerequisites", "prerequisite_expansion"),
+            action=PrerequisiteResearchAction(
+                queries=ingest_queries(plan.expansion_action, is_refinement=False),
+                urls=ingest_urls(plan.expansion_action, is_refinement=False),
+            ),
         )
 
         return {
             "messages": messages,
-            "action_plan": combined_action,
+            "action_plans": [refinement, expansion],
         }
 
     except Exception as e:
         return {
             "messages": make_message_entry(
                 "action_prerequisites",
-                "prerequisite_action_plan_error",
+                "prerequisite_plan_error",
                 [AIMessage(content=f"Error: {e}")],
             ),
         }
@@ -1464,7 +1506,6 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         name=state.concept.name,
         node_type=state.concept.node_type,
         definition=state.opt_concept.definition,
-        definition_research=state.research_results,
         definition_confidence_llm=state.opt_concept.confidence,
         last_updated_timestamp=datetime.now(),
     )

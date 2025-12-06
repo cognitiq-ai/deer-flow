@@ -2,12 +2,11 @@
 
 import operator
 from copy import deepcopy
-from math import e
 from typing import Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
 
 import yaml
 from langchain_core.messages import SystemMessage
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Annotated
 
 from src.kg.message_store import (
@@ -38,12 +37,6 @@ from src.kg.utils import get_current_date
 from src.prompts.kg.prompts import system_message_research
 
 
-def _normalize_phase(phase: Optional[str]) -> str:
-    if (phase or "").lower() not in {"profile", "prerequisites"}:
-        return "profile"
-    return (phase or "profile").lower()
-
-
 def _normalize_concept_name(name: Optional[str]) -> Optional[str]:
     if not name:
         return None
@@ -59,7 +52,6 @@ class ConceptResearchBucket(BaseModel):
     messages: MessageStore = Field(default_factory=MessageStore)
     research_results: List[ResearchOutput] = Field(default_factory=list)
     extract_results: List[ResearchSource] = Field(default_factory=list)
-    url_list: List[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -75,7 +67,6 @@ class ConceptResearchBucket(BaseModel):
         messages: MessageStore | dict | None = None,
         research_results: Optional[List[ResearchOutput]] = None,
         extract_results: Optional[List[ResearchSource]] = None,
-        url_list: Optional[List[str]] = None,
     ) -> None:
         if messages:
             self.messages = merge_message_histories(self.messages, messages)
@@ -83,15 +74,12 @@ class ConceptResearchBucket(BaseModel):
             self.research_results.extend(deepcopy(research_results))
         if extract_results:
             self.extract_results.extend(deepcopy(extract_results))
-        if url_list:
-            self.url_list.extend(list(url_list))
 
     def merge_in_place(self, other: "ConceptResearchBucket") -> None:
         self.append(
             messages=other.messages,
             research_results=other.research_results,
             extract_results=other.extract_results,
-            url_list=other.url_list,
         )
 
     def copy(self) -> "ConceptResearchBucket":
@@ -100,7 +88,6 @@ class ConceptResearchBucket(BaseModel):
             messages=self.messages,
             research_results=self.research_results,
             extract_results=self.extract_results,
-            url_list=self.url_list,
         )
         return dup
 
@@ -163,12 +150,11 @@ class ResearchIndex(BaseModel):
                     dest[concept] = bucket.copy()
 
     def _remove_bucket(self, phase: str, concept_name: str) -> None:
-        phase_key = _normalize_phase(phase)
         concept_key = _normalize_concept_name(concept_name)
         if concept_key is None:
             return
-        if phase_key in self.buckets:
-            self.buckets[phase_key].pop(concept_key, None)
+        if phase in self.buckets:
+            self.buckets[phase].pop(concept_key, None)
 
     def append_entry(
         self,
@@ -178,13 +164,11 @@ class ResearchIndex(BaseModel):
         messages: MessageStore | dict | None = None,
         research_results: Optional[List[ResearchOutput]] = None,
         extract_results: Optional[List[ResearchSource]] = None,
-        url_list: Optional[List[str]] = None,
     ) -> None:
-        phase_key = _normalize_phase(phase)
         concept_key = _normalize_concept_name(concept_name) or concept_name
         if not concept_key:
             return
-        phase_bucket = self.buckets.setdefault(phase_key, {})
+        phase_bucket = self.buckets.setdefault(phase, {})
         bucket = phase_bucket.setdefault(
             concept_key, ConceptResearchBucket(display_name=concept_name)
         )
@@ -192,20 +176,18 @@ class ResearchIndex(BaseModel):
             messages=messages,
             research_results=research_results,
             extract_results=extract_results,
-            url_list=url_list,
         )
 
     def collect_messages(
         self, phase: str, concept_names: Optional[Iterable[str]] = None
     ) -> MessageStore:
-        phase_key = _normalize_phase(phase)
         targets = (
             {(_normalize_concept_name(name) or name) for name in concept_names}
             if concept_names
             else None
         )
         aggregate = MessageStore()
-        phase_bucket = self.buckets.get(phase_key, {})
+        phase_bucket = self.buckets.get(phase, {})
         for concept_key, bucket in phase_bucket.items():
             if targets is not None and concept_key not in targets:
                 continue
@@ -215,11 +197,10 @@ class ResearchIndex(BaseModel):
     def gather_bucket(
         self, phase: str, concept_name: str
     ) -> Optional[ConceptResearchBucket]:
-        phase_key = _normalize_phase(phase)
         concept_key = _normalize_concept_name(concept_name)
         if concept_key is None:
             return None
-        return self.buckets.get(phase_key, {}).get(concept_key)
+        return self.buckets.get(phase, {}).get(concept_key)
 
     def merge_concepts(
         self,
@@ -229,7 +210,6 @@ class ResearchIndex(BaseModel):
         source_names: List[str],
         existing_index: "ResearchIndex",
     ) -> None:
-        phase_key = _normalize_phase(phase)
         target_bucket = ConceptResearchBucket(display_name=target_name)
         seen: Set[str] = set()
         for name in source_names + [target_name]:
@@ -237,24 +217,22 @@ class ResearchIndex(BaseModel):
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
-            bucket = existing_index.gather_bucket(phase_key, normalized)
+            bucket = existing_index.gather_bucket(phase, normalized)
             if bucket:
                 target_bucket.merge_in_place(bucket)
             if name != target_name and normalized:
-                self.removals.append((phase_key, normalized))
+                self.removals.append((phase, normalized))
         if (
             target_bucket.messages
             or target_bucket.research_results
             or target_bucket.extract_results
-            or target_bucket.url_list
         ):
             self.append_entry(
-                phase=phase_key,
+                phase=phase,
                 concept_name=target_name,
                 messages=target_bucket.messages,
                 research_results=target_bucket.research_results,
                 extract_results=target_bucket.extract_results,
-                url_list=target_bucket.url_list,
             )
 
     @classmethod
@@ -266,7 +244,6 @@ class ResearchIndex(BaseModel):
         messages: MessageStore | dict | None = None,
         research_results: Optional[List[ResearchOutput]] = None,
         extract_results: Optional[List[ResearchSource]] = None,
-        url_list: Optional[List[str]] = None,
     ) -> "ResearchIndex":
         index = cls()
         index.append_entry(
@@ -275,7 +252,6 @@ class ResearchIndex(BaseModel):
             messages=messages,
             research_results=research_results,
             extract_results=extract_results,
-            url_list=url_list,
         )
         return index
 
@@ -300,7 +276,6 @@ class ConceptResearchState(BaseModel):
     awg_context: AgentWorkingGraph
     goal_context: str
     awg_context_summary: Optional[str] = None
-    url_list: Annotated[List[str], operator.add] = Field(default_factory=list)
     research_index: Annotated[ResearchIndex, merge_research_index] = Field(
         default_factory=ResearchIndex
     )
@@ -323,9 +298,7 @@ class ConceptResearchState(BaseModel):
 
     # Actions/Results
     # Single action plan for the current iteration (profile or prerequisites)
-    action_plan: Optional[Union[ProfileResearchAction, PrerequisiteResearchAction]] = (
-        None
-    )
+    action_plans: List["ResearchActionState"] = Field(default_factory=list)
     research_results: Annotated[List[ResearchOutput], operator.add] = Field(
         default_factory=list
     )
@@ -364,8 +337,11 @@ class ConceptResearchState(BaseModel):
             ],
         )
 
-        self.messages.clear_node("system")
-        self.messages = merge_message_histories(self.messages, system_entry)
+        # Rebuild the message store with the system message first to guarantee it
+        # is present and precedes all other history sent to the LLM.
+        without_system = self.messages.copy()
+        without_system.clear_node("system")
+        self.messages = merge_message_histories(system_entry, without_system)
         return self
 
 
@@ -375,6 +351,7 @@ class WebSearchState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     query: SearchQuery
+    node_key: Tuple[str, str]
     phase: Literal["profile", "prerequisites"] = "profile"
     concept_name: Optional[str] = None
     id: Optional[int] = None
@@ -386,6 +363,7 @@ class ContentExtractState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     url: str
+    node_key: Tuple[str, str]
     phase: Literal["profile", "prerequisites"] = "profile"
     concept_name: Optional[str] = None
     id: Optional[int] = None
@@ -401,15 +379,29 @@ class ConceptProfileState(BaseModel):
 class PrerequisiteProfile(BaseModel):
     """State for prerequisite evaluation."""
 
-    concept: ConceptPrerequisite
+    concept: Union[ConceptNode, ConceptPrerequisite]
     evaluation: Optional[PrerequisiteCandidateEvaluation] = None
+
+    def __hash__(self) -> int:
+        return hash(self.concept.name)
+
+    def __eq__(self, other: "PrerequisiteProfile") -> bool:
+        return self.concept.name == other.concept.name
+
+    @property
+    def description(self):
+        return {"name": self.concept.name, "description": self.concept.description}
 
 
 class ConceptPrerequisiteState(BaseModel):
     """Schema for concept prerequisite output."""
 
+    existing_done: bool = False
+    queued: Set[PrerequisiteProfile] = Field(default_factory=set)
+    confirms: Set[PrerequisiteProfile] = Field(default_factory=set)
+    negatives: Set[PrerequisiteProfile] = Field(default_factory=set)
+
     # Phase 1: raw discovery candidates (per origin)
-    raw_existing: List[PrerequisiteDiscoveryCandidate] = Field(default_factory=list)
     raw_improved: List[PrerequisiteDiscoveryCandidate] = Field(default_factory=list)
     raw_external: List[PrerequisiteDiscoveryCandidate] = Field(default_factory=list)
 
@@ -425,6 +417,11 @@ class ConceptPrerequisiteState(BaseModel):
     accepts: Dict[str, PrerequisiteProfile] = Field(default_factory=dict)
     rejects: Dict[str, PrerequisiteProfile] = Field(default_factory=dict)
     pending: Dict[str, PrerequisiteProfile] = Field(default_factory=dict)
+
+    # Excluded candidates
+    @property
+    def excludes(self) -> List[Union[ConceptNode, ConceptPrerequisite]]:
+        return [*self.queued, *self.confirms, *self.negatives]
 
     @property
     def final_accepts(self) -> Dict[str, PrerequisiteProfile]:
@@ -473,6 +470,19 @@ class ConceptPrerequisiteState(BaseModel):
                     self.pending[lname] = profile
             else:
                 self.rejects[lname] = profile
+
+
+class ResearchActionState(BaseModel):
+    """State for research action."""
+
+    node_key: Tuple[str, str]
+    action: Union[ProfileResearchAction, PrerequisiteResearchAction]
+    search_results: Annotated[List[ResearchOutput], operator.add] = Field(
+        default_factory=list
+    )
+    extract_results: Annotated[List[ResearchSource], operator.add] = Field(
+        default_factory=list
+    )
 
 
 class InferRelationshipState(BaseModel):

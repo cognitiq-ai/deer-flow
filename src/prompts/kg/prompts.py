@@ -191,8 +191,7 @@ Exclude the following candidates in your analysis and response (as they are alre
 # 3. External Prerequisites (discovery)
 external_prerequisites_instructions = """## External Prerequisites Identification
 
-You are proposing new prerequisite concept candidates drawn from the wider research
-context to address remaining gaps in understanding.
+You are proposing new raw prerequisite concept candidates drawn from the wider research context to address remaining gaps in understanding. 
 
 Propose direct and specific prerequisite candidate concepts for:
 <research_concept>
@@ -209,6 +208,16 @@ Exclude the following candidates in your analysis and response (as they are alre
 {excludes_str}
 </excluded_concepts>
 
+Use these canonical prerequisite types as your grounding:
+<prerequisite_types>
+{prerequisite_types_str}
+</prerequisite_types>
+
+Reject any candidate that fits any of these reasons:
+<rejection_reasons>
+{rejection_reasons_str}
+</rejection_reasons>
+
 ### Instructions
 
 **I. Discovery & Lens Application**
@@ -218,14 +227,15 @@ Exclude the following candidates in your analysis and response (as they are alre
     2.  *Structural Decomposition (Mereology):* Essential component parts of the system/composite.
     3.  *Taxonomic Inheritance (Ontology):* Properties of the parent category required to understand the child.
     4.  *Procedural Precedence (Hierarchy):* Steps or logical inputs required for execution.
-*   **Focus:** Select only immediate, necessary, and specific prerequisites.
-*   **Granularity & Clarity:** Ensure each proposed candidate is a single, assessable learning unit with concise naming and a brief explanation of why it is directly needed.
+*   **Focus:** Select only immediate, necessary, and specific prerequisites that are *direct conceptual dependencies* of <research_concept> (do **not** include prerequisites-of-prerequisites).
+*   **Granularity & Clarity:** Ensure each proposed candidate is a single, assessable **conceptual unit** (not an entire field, generic skill, or isolated fact) with concise naming and a brief explanation of why it is directly needed.
 
 **III. Validation & Exclusion**
 *   **Negative Filter:** Strictly reject any candidate that is:
     *   Present in, an alias of, or a strict subset of <excluded_candidates>.
-    *   Not a direct prerequisite or strictly a conceptual building block.
+    *   Not a direct prerequisite or strictly a conceptual building block (use <rejection_reasons> for the canonical rejection criteria).
     *   Failing to address evaluation gaps.
+*   **Evidence Binding:** Only include candidates for which you can cite at least one supporting source URL from the research context above; if you cannot ground a candidate in explicit evidence, do not output it.
 *   **Integrity:** Do not fabricate. If research evidence is insufficient, leave empty/null.
 
 **IV. Definition & Output**

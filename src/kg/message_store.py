@@ -169,5 +169,19 @@ def prepare_llm_messages(
     base_store = MessageStore.ensure(history)
     if additional:
         base_store = base_store.merge_with(additional)
+
     flattened = base_store.flatten()
+
+    # Always put system messages first so they are included in every LLM call,
+    # even if ordering metadata is missing or stale.
+    system_buckets = base_store.data.get("system", {})
+    if system_buckets:
+        system_messages: List[AnyMessage] = []
+        for call_messages in system_buckets.values():
+            system_messages = _append_message_sequence(
+                system_messages, deepcopy(call_messages or [])
+            )
+        non_system_messages = [msg for msg in flattened if msg.type != "system"]
+        flattened = system_messages + non_system_messages
+
     return _append_message_sequence(flattened, new_messages)

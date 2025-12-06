@@ -411,9 +411,8 @@ class ProfileActionPlan(BaseModel):
     knowledge_summary: str = Field(
         description="Summary of knowledge about the concept profile based on the cumulative research."
     )
-    action_plan: List[ProfileResearchAction] = Field(
-        min_length=1,
-        description="Prioritized list of actionable goals to address the identified knowledge gaps in the research for concept profile.",
+    action_plan: ProfileResearchAction = Field(
+        description="Actionable goals to address the identified knowledge gaps in the research for concept profile.",
     )
 
 
@@ -588,7 +587,7 @@ class CanonicalPrerequisites(BaseModel):
     passed into downstream evaluation and graph updates.
     """
 
-    canonical_prerequisites: List[ConceptPrerequisite] = Field(
+    candidates: List[ConceptPrerequisite] = Field(
         default_factory=list,
         description="Canonical prerequisite concepts after organizing, merging, and splitting discovery candidates.",
     )
