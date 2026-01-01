@@ -1,14 +1,14 @@
-"""Pydantic models for knowledge graph entities."""
-
-import hashlib
-import uuid
-from datetime import datetime
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import networkx as nx
-import yaml
 from pydantic import BaseModel, Field
+
+from src.kg.base_models import (
+    ConceptNode,
+    ConceptNodeStatus,
+    Relationship,
+    RelationshipType,
+)
 
 try:
     import gravis as gv
@@ -16,329 +16,6 @@ try:
     VISUALIZATION_AVAILABLE = True
 except ImportError:
     VISUALIZATION_AVAILABLE = False
-
-
-class ConceptNodeStatus(str, Enum):
-    """Status of a concept node in the knowledge graph."""
-
-    STUB = "stub"  # Initial placeholder with minimal information
-    DEFINED_LOW_CONFIDENCE = "defined_low_confidence"  # Researched but low confidence
-    DEFINED_HIGH_CONFIDENCE = (
-        "defined_high_confidence"  # Well-researched with high confidence
-    )
-    CANONICAL = "canonical"  # Verified and canonical definition
-    DEPRECATED = "deprecated"  # No longer valid or relevant
-    GOAL_FULFILLED = "goal_fulfilled"  # Goal is fulfilled
-
-
-class RelationshipType(str, Enum):
-    """Type of relationship between concept nodes."""
-
-    HAS_PREREQUISITE = "HAS_PREREQUISITE"  # Target is a prerequisite for source
-    FULFILS_GOAL = "FULFILS_GOAL"  # Source fulfils target goal
-    IS_TYPE_OF = "IS_TYPE_OF"  # Source is a type of target (hierarchical relationship)
-    IS_PART_OF = "IS_PART_OF"  # Source is part of target (compositional relationship)
-    IS_DUPLICATE_OF = "IS_DUPLICATE_OF"  # Source is a duplicate of target
-    NO_RELATIONSHIP = "NO_RELATIONSHIP"  # No relationship exists between the concepts
-
-    def __str__(self) -> str:
-        return self.value
-
-    @property
-    def description(self) -> str:
-        """Return the description of the relationship type."""
-        if self == RelationshipType.HAS_PREREQUISITE:
-            return (
-                "**Prerequisite (HAS_PREREQUISITE)**: A dependency relationship exists between the concepts. "
-                + "A directed link A -> B means A requires prior understanding of B. "
-                + "Example: Solving quadratic equations HAS_PREREQUISITE completing the square. "
-                + "Structures learning order: ensures foundational knowledge is secured before tackling dependent concepts. Guides adaptive sequencing, remediation, and personalized study paths."
-            )
-        elif self == RelationshipType.FULFILS_GOAL:
-            return (
-                "**Fulfillment (FULFILS_GOAL)**: A goal fulfillment relationship exists between the concepts. "
-                + "A directed link A -> B means A fulfills the goal of B."
-            )
-        elif self == RelationshipType.IS_TYPE_OF:
-            return (
-                "**Taxonomic (IS_TYPE_OF)**: A hierarchical relationship exists between the concepts. "
-                + "A directed link A -> B meaning A is a subtype or special case of B. "
-                + "E.g. A square IS_TYPE_OF quadrilateral. "
-                + "Organizes concepts into a hierarchy, so specialized ideas fit under broader umbrellas. "
-                + "Supports zooming out to more abstract levels or zooming in to concrete specializations."
-            )
-        elif self == RelationshipType.IS_PART_OF:
-            return (
-                "**Meronymy (IS_PART_OF)**: A part-whole compositional relationship exists between the concepts. "
-                + "A directed link A -> B meaning A is a part of B. "
-                + "E.g. The dot product IS_PART_OF the broader topic vector algebra. "
-                + "Helps smaller subskills or components assemble into larger constructs. "
-                + "Guides modular design of lessons: teach the parts before composing the whole."
-            )
-        elif self == RelationshipType.IS_DUPLICATE_OF:
-            return (
-                "**Equivalence (IS_DUPLICATE_OF)**: An identity relationship exists between the concepts. "
-                + "A bidirectional link A <-> B means A and B are semantically identical or redundant entries. "
-                + "Example: Dot product IS_DUPLICATE_OF Scalar product. "
-                + "Prevents redundancy in knowledge graphs, merges aliases into a single canonical representation, and ensures consistent reference. Supports cleaner analytics and avoids fragmenting learner progress across duplicate concepts."
-            )
-        else:
-            return "None of the above relationships exist between these two concepts"
-
-    @property
-    def reorder(self) -> bool:
-        """
-        Defined as the final node ordering per relationship type
-        Aligns all relationship types to common semantic meaning
-        HAS_PREREQUISITE: child -> parent
-        IS_PART_OF: parent -> child
-        IS_TYPE_OF: child -> parent
-        """
-        if self == RelationshipType.HAS_PREREQUISITE:
-            return True
-        elif self == RelationshipType.IS_PART_OF:
-            return False
-        elif self == RelationshipType.IS_TYPE_OF:
-            return True
-        else:
-            return True
-
-
-class ResearchSource(BaseModel):
-    """
-    Represents the sources of the research process.
-    """
-
-    url: str
-    title: Optional[str] = None
-    snippet: Optional[str] = None
-    content: Optional[str] = None
-
-    def __hash__(self) -> int:
-        return int(self.id, 16)
-
-    @property
-    def id(self) -> str:
-        """
-        Return the ID of the source.
-        """
-        return hashlib.sha256(self.url.encode()).hexdigest()
-
-    def merge(self, other: "ResearchSource") -> None:
-        """
-        Merge another source into this source.
-        """
-        if self.url == other.url:
-            self.title = self.title or other.title
-            self.snippet = self.snippet or other.snippet
-            self.content = self.content or other.content
-
-
-class ResearchQA(BaseModel):
-    """
-    (Question, Answer) tuple research output.
-    """
-
-    query: str
-    result_summary: str
-    confidence: Optional[float] = None
-
-
-class ResearchOutput(BaseModel):
-    """
-    (Question, Summary) tuple research output with sources.
-    Summary with inline citations [1], [2], ..
-    corresponding to the source list index.
-    Sources are the sources of the summary.
-    """
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    query_result_summary: ResearchQA
-    sources: List[ResearchSource]
-
-    def __hash__(self) -> int:
-        return self.id.__hash__()
-
-    def to_yaml(self) -> str:
-        """
-        Return the YAML representation of the research output.
-        """
-        return yaml.dump(self.model_dump(), sort_keys=False)
-
-
-class ConceptNode(BaseModel):
-    """
-    Represents a concept node in the knowledge graph.
-
-    A concept can be a skill, topic, idea, or any other entity that can be learned.
-    """
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str  # web scraper
-    topic: str = ""  # Python
-    definition: Optional[str] = None
-    node_type: str = "concept"  # Default type
-    exists_in_pkg: bool = False
-
-    # Discovery metadata
-    definition_research: List[ResearchOutput] = Field(default_factory=list)
-    prerequisites_research: List[ResearchOutput] = Field(default_factory=list)
-
-    # Confidence scores
-    definition_confidence_llm: float = 0.0
-
-    # Embedding vectors for vector search
-    name_embedding: Optional[List[float]] = None
-    topic_embedding: Optional[List[float]] = None
-    definition_embedding: Optional[List[float]] = None
-
-    # Status and timestamps
-    last_updated_timestamp: datetime = Field(default_factory=datetime.now)
-    defined_status: Optional[ConceptNodeStatus] = None
-
-    def __hash__(self) -> int:
-        return self.id.__hash__()
-
-    def get_status(self) -> ConceptNodeStatus:
-        """Determine concept status based on definition and confidence."""
-        if not self.definition or self.confidence == 0.0:
-            return ConceptNodeStatus.STUB
-        else:
-            return ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE
-
-    @property
-    def status(self) -> ConceptNodeStatus:
-        """
-        Return the status of the concept.
-        """
-        return self.defined_status or self.get_status()
-
-    @property
-    def confidence(self) -> float:
-        """
-        Return the confidence of the concept.
-        """
-        return self.definition_confidence_llm
-
-    @property
-    def description(self) -> str:
-        """
-        Return the description of the concept.
-        """
-        return self.definition or ""
-
-    @property
-    def definition_research_yaml(self) -> str:
-        """
-        Return the YAML representation of the definition research.
-        """
-        return yaml.dump(self.definition_research, sort_keys=False)
-
-    def merge_node(self, node: "ConceptNode") -> None:
-        """
-        Merge this node into incoming node.
-        Updating with higher confidence values
-        This node's `self.id` is retained.
-
-        Args:
-            node: Another node to merge into this one
-        """
-
-        # Merge information (taking higher confidence values, merging lists)
-        if node.confidence > self.confidence:
-            self.definition = node.definition
-            self.definition_confidence_llm = node.definition_confidence_llm
-            self.definition_embedding = node.definition_embedding
-
-        # Merge research results (ensure uniqueness)
-        existing_results = set(self.definition_research)
-        new_results = set(node.definition_research)
-        self.definition_research = list(existing_results.union(new_results))
-
-        # Update status if the new node has a better status
-        if (
-            node.status != ConceptNodeStatus.STUB
-            and self.status == ConceptNodeStatus.STUB
-        ):
-            self.defined_status = node.status
-
-        # Update timestamp
-        self.last_updated_timestamp = max(
-            self.last_updated_timestamp, node.last_updated_timestamp
-        )
-
-
-class Relationship(BaseModel):
-    """
-    Represents a relationship between concept nodes in the knowledge graph.
-    """
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    source_node_id: str
-    target_node_id: str
-    type: RelationshipType
-
-    # Discovery metadata
-    research_results: List[ResearchOutput] = Field(default_factory=list)
-    discovery_count_search: int = 0
-    discovery_count_llm_inference: int = 0
-    source_urls: List[str] = Field(default_factory=list)
-
-    # Confidence scores
-    type_confidence_llm: float = 0.0
-    existence_confidence_llm: float = 0.0
-
-    # Timestamps
-    last_updated_timestamp: datetime = Field(default_factory=datetime.now)
-
-    def __hash__(self) -> int:
-        return self.id.__hash__()
-
-    @property
-    def confidence(self) -> float:
-        """
-        Return the confidence of the relationship.
-        """
-        return self.existence_confidence_llm
-
-    def merge_relationship(self, other: "Relationship") -> None:
-        """
-        Merge this relationship into incoming relationship.
-        Updating with higher confidence values.
-        This relationship's `self.id` is retained.
-
-        Args:
-            other: Another relationship to merge into this one
-        """
-        # Only merge if they're the same type and between the same nodes
-        if (
-            self.source_node_id != other.source_node_id
-            or self.target_node_id != other.target_node_id
-            or self.type != other.type
-        ):
-            return
-
-        # Sum discovery counts
-        self.discovery_count_search += other.discovery_count_search
-        self.discovery_count_llm_inference += other.discovery_count_llm_inference
-
-        # Merge source URLs (ensure uniqueness)
-        existing_urls = set(self.source_urls)
-        new_urls = set(other.source_urls)
-        self.source_urls = list(existing_urls.union(new_urls))
-
-        # Take higher confidence values
-        self.type_confidence_llm = max(
-            self.type_confidence_llm, other.type_confidence_llm
-        )
-        self.existence_confidence_llm = max(
-            self.existence_confidence_llm, other.existence_confidence_llm
-        )
-
-        # Update timestamp to the most recent
-        self.last_updated_timestamp = max(
-            self.last_updated_timestamp, other.last_updated_timestamp
-        )
 
 
 class AgentWorkingGraph(BaseModel):
@@ -503,7 +180,7 @@ class AgentWorkingGraph(BaseModel):
                     relationship.target_node_id,
                     relationship.source_node_id,
                     id=relationship.id,
-                    type=relationship.type,
+                    type=relationship.type.code,
                     weight=relationship.confidence,
                 )
             else:
@@ -512,7 +189,7 @@ class AgentWorkingGraph(BaseModel):
                     relationship.source_node_id,
                     relationship.target_node_id,
                     id=relationship.id,
-                    type=relationship.type,
+                    type=relationship.type.code,
                     weight=relationship.confidence,
                 )
 
@@ -541,29 +218,27 @@ class AgentWorkingGraph(BaseModel):
         def get_node_shape(node: ConceptNode) -> str:
             if node.node_type == "goal":
                 return "hexagon"
-            elif node.exists_in_pkg:
+            if node.exists_in_pkg:
                 return "circle"
-            elif node.status == ConceptNodeStatus.DEFINED_LOW_CONFIDENCE:
+            if node.status == ConceptNodeStatus.DEFINED_LOW_CONFIDENCE:
                 return "circle"
-            elif node.status == ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE:
+            if node.status == ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE:
                 return "circle"
-            else:
-                return "rectangle"
+            return "rectangle"
 
         # Define edge colors mapping
         def get_edge_color(edge: Relationship) -> str:
             if edge.type == RelationshipType.HAS_PREREQUISITE:  # Red
                 return "#e74c3c"
-            elif edge.type == RelationshipType.FULFILS_GOAL:  # Purple
+            if edge.type == RelationshipType.FULFILS_GOAL:  # Purple
                 return "#9b59b6"
-            elif edge.type == RelationshipType.IS_TYPE_OF:  # Blue
+            if edge.type == RelationshipType.IS_TYPE_OF:  # Blue
                 return "#3498db"
-            elif edge.type == RelationshipType.IS_PART_OF:  # Green
+            if edge.type == RelationshipType.IS_PART_OF:  # Green
                 return "#27ae60"
-            elif edge.type == RelationshipType.IS_DUPLICATE_OF:  # Orange
+            if edge.type == RelationshipType.IS_DUPLICATE_OF:  # Orange
                 return "#f39c12"
-            else:
-                return "#000000"
+            return "#000000"
 
         # Define community colors mapping
         community_colors = [
@@ -665,14 +340,14 @@ class AgentWorkingGraph(BaseModel):
             edge_data["color"] = get_edge_color(relationship)
 
             # Label for relationship type
-            edge_data["label"] = relationship.type.value
+            edge_data["label"] = relationship.type.code
 
             # Hover text for edge
             source_node = self.get_node(source)
             target_node = self.get_node(target)
 
             hover_lines = [
-                f"<b>{relationship.type.value}</b>",
+                f"<b>{relationship.type.code}</b>",
                 f"{source_node.name if source_node else 'Unknown'} → {target_node.name if target_node else 'Unknown'}",
                 f"Confidence: {relationship.confidence:.2f}",
             ]
@@ -1013,7 +688,7 @@ class AgentWorkingGraph(BaseModel):
             # Find all cycles and relationships involved
             try:
                 cycles = list(nx.simple_cycles(G))
-            except:
+            except Exception as e:
                 # Fallback if simple_cycles fails
                 cycles = []
 
@@ -1094,7 +769,7 @@ class AgentWorkingGraph(BaseModel):
             # Find all cycles in the combined graph
             try:
                 cycles = list(nx.simple_cycles(combined_graph))
-            except:
+            except Exception as e:
                 # Fallback if simple_cycles fails
                 cycles = []
 
@@ -1229,7 +904,7 @@ class AgentWorkingGraph(BaseModel):
         forbidden = nx.ancestors(G, node.id) | {node.id} | set(G.successors(node.id))
         return [self.get_node(j) for j in G.nodes if j not in forbidden]
 
-    def dfs_postorder(self, tie_break_key=lambda x: str(x)) -> List[str]:
+    def dfs_postorder(self) -> List[str]:
         """
         Return a postorder-like ordering that:
         - is a DFS-postorder on the reversed graph (children before parent),
@@ -1257,50 +932,6 @@ class AgentWorkingGraph(BaseModel):
         G.remove_nodes_from(rem)
         # Do a DFS postorder traversal on the reversed graph
         post = list(nx.dfs_postorder_nodes(G.reverse(), source=goal))
-        return list(map(lambda x: self.get_node(x).id, post))
-
-        # Approach #2: Use the longest distance to the goal
-        NEG_INF = -(10**9)
-
-        def longest_distance(G, node):
-            d = {n: NEG_INF for n in G}
-            d[node] = 0
-            for u in reversed(list(nx.topological_sort(G))):
-                d[u] = max(
-                    [1 + d[v] for v in G.successors(u) if d[v] > NEG_INF] or [d[u]]
-                )
-            return d
-
-        dist = longest_distance(G, goal)
-        R = G.reverse(copy=True)  # edges: parent -> child
-        visited = set()
-        post: List[Any] = []
-
-        def neigh_key(n):
-            # sort by descending dist, tie-break deterministically
-            # nodes that cannot reach goal get smallest priority
-            d = dist.get(n, NEG_INF)
-            return (-d, tie_break_key(n))
-
-        def dfs(u):
-            visited.add(u)
-            # iterate children (in reversed graph) farthest-first
-            for v in sorted(R.successors(u), key=neigh_key):
-                if v not in visited:
-                    dfs(v)
-            post.append(u)
-
-        # 1) start from goal (explore its entire reachable component)
-        if goal in R and goal not in visited:
-            dfs(goal)
-
-        # 2) process remaining nodes that can reach goal but were not visited
-        remaining = [n for n in G.nodes() if n not in visited]
-        remaining.sort(key=lambda x: (-(dist.get(x, NEG_INF)), tie_break_key(x)))
-        for n in remaining:
-            if n not in visited:
-                dfs(n)
-
         return list(map(lambda x: self.get_node(x).id, post))
 
     def get_definitions(
@@ -1352,7 +983,7 @@ class AgentWorkingGraph(BaseModel):
         lines.append("")  # Empty line
 
         # Then, describe relationships of the specified type
-        lines.append(f"Relationships ({relationship_type.value}):")
+        lines.append(f"Relationships ({relationship_type.code}):")
 
         # Group relationships by source node
         source_to_targets = {}
@@ -1373,6 +1004,6 @@ class AgentWorkingGraph(BaseModel):
         # Format the relationships
         for source_name, target_names in source_to_targets.items():
             targets_str = ", ".join(target_names)
-            lines.append(f"{source_name} {relationship_type.value} {targets_str}.")
+            lines.append(f"{source_name} {relationship_type.code} {targets_str}.")
 
         return "\n".join(lines)

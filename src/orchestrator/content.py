@@ -6,7 +6,8 @@ from src.config import Configuration
 from src.config.report_style import ReportStyle
 from src.db import EducationalReportsRepository
 from src.graph.builder import build_graph_with_memory
-from src.kg.models import AgentWorkingGraph, ConceptNode
+from src.kg.agent_working_graph import AgentWorkingGraph
+from src.kg.base_models import ConceptNode
 from src.orchestrator.models import SessionLog
 
 
@@ -67,7 +68,7 @@ def _build_context(
     # Direct prerequisites from KG
     prerequisite_rels = awg_context.get_relationships_by_target(concept_node.id)
     direct_prerequisites = [
-        rel for rel in prerequisite_rels if rel.type.value == "HAS_PREREQUISITE"
+        rel for rel in prerequisite_rels if rel.type.code == "HAS_PREREQUISITE"
     ]
     if direct_prerequisites:
         context_parts.append("**Direct Prerequisites**:")
@@ -78,7 +79,7 @@ def _build_context(
 
     # What this concept enables
     enabled_rels = awg_context.get_relationships_by_source(concept_node.id)
-    enables = [rel for rel in enabled_rels if rel.type.value == "HAS_PREREQUISITE"]
+    enables = [rel for rel in enabled_rels if rel.type.code == "HAS_PREREQUISITE"]
     if enables:
         context_parts.append("**This concept enables**:")
         for rel in enables:
@@ -90,7 +91,7 @@ def _build_context(
     type_rels = [
         rel
         for rel in prerequisite_rels
-        if rel.type.value in ["IS_TYPE_OF", "IS_PART_OF"]
+        if rel.type.code in ["IS_TYPE_OF", "IS_PART_OF"]
     ]
     if type_rels:
         context_parts.append("**Concept Classification**:")
@@ -98,7 +99,7 @@ def _build_context(
             parent_node = awg_context.get_node(rel.source_node_id)
             if parent_node:
                 context_parts.append(
-                    f"- {concept_node.name} {rel.type.value.lower().replace('_', ' ')} {parent_node.name}"
+                    f"- {concept_node.name} {rel.type.code.lower().replace('_', ' ')} {parent_node.name}"
                 )
 
     # 5. Educational Instructions

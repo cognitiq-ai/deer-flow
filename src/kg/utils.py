@@ -2,28 +2,53 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Type, TypeVar
+from typing import Annotated, Any, Dict, List, Literal, Optional, Type, TypeVar, Union
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, create_model
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
-from typing_extensions import Annotated
-
-from src.kg.models import ConceptNode, RelationshipType
 
 
-def PydanticFieldLiteral(
+class EnumMember(BaseModel):
+    """Enum value and description."""
+
+    code: str
+    description: str = Field(description="Description of the enum value.")
+
+    def __hash__(self) -> int:
+        return hash(self.code)
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class EnumDescriptor(Enum):
+    """Base enum: members should be EnumMember instances."""
+
+    @property
+    def code(self) -> str:
+        return self.value.code
+
+    @property
+    def description(self) -> str:
+        return self.value.description
+
+    @property
+    def member(self) -> EnumMember:
+        return self.value
+
+
+def constrain_model(
     base_model: Type[BaseModel],
     field_name: str,
-    field_values: list[str],
+    field_values: Union[Type[Enum], List[str]],
     field_description: Optional[str] = None,
 ) -> Type[BaseModel]:
     """
     Creates a new Pydantic model by extending the base model with a constrained field.
     """
-
-    # Define the new Literal type
-    DynamicFieldLiteral = Literal[*field_values]
+    # Define the new Literal type (PydanticEnum wrapper)
+    AnnotatedFieldType = PydanticEnum(field_values)
 
     # Prepare field definitions for create_model
     fields = {}
@@ -31,8 +56,8 @@ def PydanticFieldLiteral(
         if name == field_name:
             # Set the new type annotation for the status field
             fields[name] = (
-                DynamicFieldLiteral,
-                Field(field_info.default, description=field_info.description),
+                AnnotatedFieldType,
+                Field(description=field_description or field_info.description),
             )
         else:
             # Keep existing fields as they are (type, default/required field_name)
@@ -43,73 +68,50 @@ def PydanticFieldLiteral(
     # Create new field if does not exist
     if field_name not in fields:
         fields[field_name] = (
-            DynamicFieldLiteral,
+            AnnotatedFieldType,
             Field(..., description=field_description),
         )
 
     return create_model(base_model.__name__, **fields)  # type: ignore[no-any-return]
 
 
-def PydanticEnum(enum_cls: Type[Enum]):
+def PydanticEnum(
+    enum_cls: Union[Type[Enum], List[str]], description: Optional[str] = None
+):
     """
     Returns an Annotated type that contains:
     1. The Literal validation (from enum values)
     2. The Field description (from class docstring + enum descriptions)
     """
     # Extract values
-    valid_values = tuple(member.value.value for member in enum_cls)
+    if isinstance(enum_cls, type) and issubclass(enum_cls, EnumDescriptor):
+        # This checks if enum_cls is a class (type) and a subclass of Enum
+        class_doc = "\n".join([description or "", enum_cls.__doc__ or ""])
+        valid_values = []
+        members = []
+        for member in enum_cls:
+            valid_values.append(member.code)
+            members.append(f"- '{member.code}': {member.description}")
+        full_description = f"{class_doc}\n\nOptions (enum):\n" + "\n".join(members)
+    elif isinstance(enum_cls, list):
+        # This checks if enum_cls is a list
+        valid_values = enum_cls
+        members = [f"- '{v}'" for v in enum_cls]
+        full_description = "\n".join(
+            [description or "", "Options (enum):\n" + "\n".join(members)]
+        )
+    else:
+        # Optional: Handle the case where the input is neither a valid Enum class nor a list
+        raise TypeError("enum_cls must be an Enum class or a list of strings")
 
-    # Extract docstrings
-    class_doc = enum_cls.__doc__ or ""
-    member_lines = [f"- '{m.value.value}': {m.value.description}" for m in enum_cls]
-    full_description = f"{class_doc}\n\nOptions:\n" + "\n".join(member_lines)
-
-    # Return an Annotated Type.
-    # This bundles the Type (Literal) and the Metadata (Field description) together.
-    return Annotated[Literal[valid_values], Field(description=full_description)]
-
-
-def make_inferred_relationship_model(
-    allowed: List[RelationshipType],
-) -> Type[BaseModel]:
-    """Create a dynamic Pydantic model that constrains relationship_type to allowed set.
-
-    Always includes NO_RELATIONSHIP as an allowed option so the model can express "none".
-    """
-    allowed_set = set(allowed or [])
-    allowed_set.add(RelationshipType.NO_RELATIONSHIP)
-    # Build a Literal of the raw enum values at runtime
-    literal_values = tuple(rt.value for rt in allowed_set)
-    AllowedLiteral = __import__("typing").Literal.__getitem__(literal_values)
-
-    # Create a new model class dynamically
-    Model = create_model(  # type: ignore[no-any-return]
-        "InferredRelationship",
-        relationship_type=(AllowedLiteral, ...),
-        direction=(int, ...),
-        confidence=(float, ...),
-        sources=(List[str], []),
-    )
-    return Model
+    # Bundles the Type (Literal) and the Metadata (Field description).
+    return Annotated[Literal[tuple(valid_values)], Field(description=full_description)]
 
 
 def format_message(key: str, value: str) -> str:
     """Format message for presentation to LLM"""
 
     return f"<{key}>\n```\n{value}\n```\n</{key}>"
-
-
-def get_research_concept(concept: ConceptNode, goal_context: str) -> str:
-    """Get the research topic from the messages."""
-    # Create the "concept" in "topic" to achieve "goal" string
-    if concept.name.lower() != goal_context.lower():
-        concept_definition = concept.definition or ""
-        return f"**{concept.name}:** {concept_definition}"
-    else:
-        if concept.topic:
-            return f"**{concept.topic}** to {goal_context}"
-        else:
-            return goal_context
 
 
 def to_yaml(obj: Any) -> str:
@@ -132,7 +134,7 @@ def to_yaml(obj: Any) -> str:
         return value
 
     cleaned = _to_serializable(obj)
-    return yaml.dump(cleaned, sort_keys=False)
+    return yaml.dump(cleaned, sort_keys=False).strip()
 
 
 def format_search_results(search_results: List[Dict[str, Any]]) -> str:
@@ -306,12 +308,10 @@ def llm_with_retry(
 
             return result
 
-        except (ValidationError, ValueError, TypeError) as e:
-            print(f"Structured output failed: {e}. Retrying...")
+        except (ValidationError, ValueError, TypeError):
             raise
         except Exception as e:
             # For non-retryable exceptions, convert to ValidationError to stop retrying
-            print(f"Non-retryable error: {e}")
             raise ValidationError(f"Non-retryable error: {e}")
 
     return _get_structured_output()

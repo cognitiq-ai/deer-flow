@@ -10,10 +10,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.db.neo4j_client import Neo4jClient
-from src.kg.models import (
-    AgentWorkingGraph,
+from src.kg.agent_working_graph import AgentWorkingGraph
+from src.kg.base_models import (
     ConceptNode,
     ConceptNodeStatus,
+    EvidenceAtom,
     Relationship,
     RelationshipType,
 )
@@ -372,7 +373,7 @@ class PKGInterface:
             return False, None
 
         # Check if there's already a path from target back to source (which would create a cycle)
-        rel_type_str = relationship_type.value
+        rel_type_str = relationship_type.code
         query = f"""
         MATCH path = (target:Concept {{id: $target_id}})-[:{rel_type_str}*]->(source:Concept {{id: $source_id}})
         RETURN [node IN nodes(path) | node.id] AS cycle_path
@@ -457,12 +458,12 @@ class PKGInterface:
                     rel_data.source_node_id,
                     rel_data.target_node_id,
                     cycle_path,
-                    rel_type_enum.value,
+                    rel_type_enum.code,
                 )
 
         # Check if a relationship of the same type already exists between these nodes
         rel_type = (
-            rel_data.type.value
+            rel_data.type.code
             if isinstance(rel_data.type, RelationshipType)
             else rel_data.type
         )
@@ -495,12 +496,17 @@ class PKGInterface:
                         source_node_id=rel_data.source_node_id,
                         target_node_id=rel_data.target_node_id,
                         type=rel_type,
+                        description=existing_rel_dict.get("description"),
                         discovery_count_search=existing_rel_dict.get(
                             "discovery_count_search", 0
                         ),
                         discovery_count_llm_inference=existing_rel_dict.get(
                             "discovery_count_llm_inference", 0
                         ),
+                        sources=[
+                            EvidenceAtom(**source)
+                            for source in existing_rel_dict.get("sources", [])
+                        ],
                         source_urls=existing_rel_dict.get("source_urls", []),
                         type_confidence_llm=existing_rel_dict.get(
                             "type_confidence_llm", 0.0
@@ -580,9 +586,11 @@ class PKGInterface:
             source_node_id=existing_rel.source_node_id,
             target_node_id=existing_rel.target_node_id,
             type=existing_rel.type,
+            description=existing_rel.description,
             discovery_count_search=existing_rel.discovery_count_search,
             discovery_count_llm_inference=existing_rel.discovery_count_llm_inference,
             source_urls=existing_rel.source_urls.copy(),
+            sources=existing_rel.sources.copy(),
             type_confidence_llm=existing_rel.type_confidence_llm,
             existence_confidence_llm=existing_rel.existence_confidence_llm,
             last_updated_timestamp=existing_rel.last_updated_timestamp,
@@ -601,7 +609,7 @@ class PKGInterface:
             relationship: The relationship to update
         """
         rel_type = (
-            relationship.type.value
+            relationship.type.code
             if isinstance(relationship.type, RelationshipType)
             else relationship.type
         )
@@ -701,7 +709,7 @@ class PKGInterface:
                     if isinstance(edge.type, RelationshipType)
                     else RelationshipType(edge.type)
                 )
-                rel_type_str = rel_type_enum.value
+                rel_type_str = rel_type_enum.code
 
                 if rel_type_enum in [
                     RelationshipType.HAS_PREREQUISITE,
@@ -741,7 +749,7 @@ class PKGInterface:
                     edge_data.get("type")
                     if isinstance(edge_data, dict)
                     else (
-                        edge_data.type.value
+                        edge_data.type.code
                         if isinstance(edge_data.type, RelationshipType)
                         else edge_data.type
                     )
@@ -771,7 +779,7 @@ class PKGInterface:
                     edge_data.get("type")
                     if isinstance(edge_data, dict)
                     else (
-                        edge_data.type.value
+                        edge_data.type.code
                         if isinstance(edge_data.type, RelationshipType)
                         else edge_data.type
                     )
@@ -878,6 +886,7 @@ class PKGInterface:
                                     "discovery_count_llm_inference", 0
                                 ),
                                 source_urls=rel.get("source_urls", []),
+                                sources=rel.get("sources", []),
                                 type_confidence_llm=rel.get("type_confidence_llm", 0.0),
                                 existence_confidence_llm=rel.get(
                                     "existence_confidence_llm", 0.0

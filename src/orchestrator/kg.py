@@ -6,14 +6,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import Configuration
 from src.db.pkg_interface import PKGInterface
-from src.kg.graph import concept_research_graph, infer_relationship_graph
-from src.kg.models import (
-    AgentWorkingGraph,
+from src.kg.agent_working_graph import AgentWorkingGraph
+from src.kg.base_models import (
     ConceptNode,
     ConceptNodeStatus,
     Relationship,
     RelationshipType,
 )
+from src.kg.builder import concept_research_graph, infer_relationship_graph
 from src.kg.state import (
     ConceptResearchState,
     InferRelationshipsState,

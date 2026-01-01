@@ -14,6 +14,9 @@ Features:
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 
+from src.kg.agent_working_graph import AgentWorkingGraph
+from src.orchestrator.models import SessionLog, UserQueryContext
+
 if TYPE_CHECKING:
     from rich.console import Console
     from rich.progress import Progress
@@ -33,9 +36,6 @@ except ImportError:
     SpinnerColumn = None
     TextColumn = None
     Table = None
-
-from src.kg.models import AgentWorkingGraph
-from src.orchestrator.models import SessionLog, UserQueryContext
 
 
 @runtime_checkable
@@ -294,7 +294,7 @@ class RichDebugCallbacks:
         # Count by relationship type
         rel_counts: Dict[str, int] = {}
         for rel in awg.relationships.values():
-            rel_counts[rel.type.value] = rel_counts.get(rel.type.value, 0) + 1
+            rel_counts[rel.type.code] = rel_counts.get(rel.type.code, 0) + 1
 
         for rel_type, count in rel_counts.items():
             table.add_row(f"Rel: {rel_type}", str(count))

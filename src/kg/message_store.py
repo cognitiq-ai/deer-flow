@@ -1,29 +1,10 @@
-from __future__ import annotations
-
 from copy import deepcopy
 from typing import Dict, List, Tuple
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, HumanMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 OrderEntry = Tuple[str, str, int, int]
-
-
-def _append_message_sequence(
-    base: List[AnyMessage], additions: List[AnyMessage]
-) -> List[AnyMessage]:
-    """Append message sequences, merging consecutive entries of the same type."""
-
-    merged = deepcopy(base or [])
-    for message in additions or []:
-        if len(merged) == 0:
-            merged.append(message)
-        elif merged[-1].type == message.type:
-            merged[-1].content += f"\n\n{message.content}"
-        else:
-            merged.append(message)
-
-    return merged
 
 
 class MessageStore(BaseModel):
@@ -58,7 +39,7 @@ class MessageStore(BaseModel):
         node_bucket = self.data.setdefault(node, {})
         existing_seq = node_bucket.get(call, [])
         start_idx = len(existing_seq)
-        node_bucket[call] = _append_message_sequence(existing_seq, messages)
+        node_bucket[call] = append_message_sequence(existing_seq, messages)
         end_idx = len(node_bucket[call])
         if end_idx > start_idx:
             self.order.append((node, call, start_idx, end_idx))
@@ -119,15 +100,13 @@ class MessageStore(BaseModel):
             flattened: List[AnyMessage] = []
             for node, call, start, end in self.order:
                 call_messages = self.data.get(node, {}).get(call, [])
-                flattened = _append_message_sequence(
-                    flattened, call_messages[start:end]
-                )
+                flattened = append_message_sequence(flattened, call_messages[start:end])
             return flattened
 
         flattened: List[AnyMessage] = []
         for call_bucket in self.data.values():
             for call_messages in call_bucket.values():
-                flattened = _append_message_sequence(flattened, call_messages or [])
+                flattened = append_message_sequence(flattened, call_messages or [])
         return flattened
 
 
@@ -178,10 +157,63 @@ def prepare_llm_messages(
     if system_buckets:
         system_messages: List[AnyMessage] = []
         for call_messages in system_buckets.values():
-            system_messages = _append_message_sequence(
+            system_messages = append_message_sequence(
                 system_messages, deepcopy(call_messages or [])
             )
         non_system_messages = [msg for msg in flattened if msg.type != "system"]
         flattened = system_messages + non_system_messages
 
-    return _append_message_sequence(flattened, new_messages)
+    return append_message_sequence(flattened, new_messages)
+
+
+def append_message_sequence(
+    base: List[AnyMessage], additions: List[AnyMessage]
+) -> List[AnyMessage]:
+    """Append message sequences, merging consecutive entries of the same type."""
+
+    merged = deepcopy(base or [])
+    for message in additions or []:
+        if len(merged) == 0:
+            merged.append(message)
+        elif merged[-1].type == message.type:
+            merged[-1].content += f"\n\n{message.content}"
+        else:
+            merged.append(message)
+
+    return merged
+
+
+def curate_messages(
+    base_messages: MessageStore,
+    message_keys: List[Tuple[str, str]],
+    include_system: bool = True,
+) -> MessageStore:
+    """Collect messages from the message store for a given message type and keys."""
+
+    # Curate the minimal context
+    curated_context = MessageStore()
+
+    # Check any system messages
+    if include_system:
+        system_bucket = base_messages.data.get("system", {})
+        for call_id, sys_messages in system_bucket.items():
+            curated_context = merge_message_histories(
+                curated_context, make_message_entry("system", call_id, sys_messages)
+            )
+
+    # Append all remaining AI messages and mutate to human messages
+    for node, field in message_keys:
+        messages = base_messages.data.get(node, {}).get(field, [])
+        if messages:
+            # Take last message of the selected message types:
+            selected = []
+            for msg in reversed(messages):
+                if msg.type == "ai":
+                    content = f"\n## Context\n---\n{msg.content}\n---"
+                    selected.append(HumanMessage(content))
+                    break
+            curated_context = merge_message_histories(
+                curated_context, make_message_entry(node, field, selected)
+            )
+
+    return curated_context
