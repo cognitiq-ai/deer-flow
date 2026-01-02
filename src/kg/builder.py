@@ -23,6 +23,7 @@ from src.kg.relationships.nodes import (
     infer_relationship,
     merge_related_concepts,
     route_after_related,
+    send_to_infer_relationship,
 )
 from src.kg.research.nodes import (
     collect_research,
@@ -34,7 +35,6 @@ from src.kg.research.nodes import (
 from src.kg.state import (
     ConceptResearchState,
     InferRelationshipsState,
-    InferRelationshipState,
 )
 
 
@@ -119,25 +119,6 @@ def create_concept_research_graph():
 
 # Create the compiled graph - single instance
 concept_research_graph = create_concept_research_graph()
-
-
-def send_to_infer_relationship(
-    state: InferRelationshipsState, config: RunnableConfig
-) -> List[Send]:
-    """
-    LangGraph routing function that determines next step after merging related concepts.
-    """
-    return [
-        Send(
-            "infer_relationship",
-            InferRelationshipState(
-                concept_a=rel.concept_a,
-                concept_b=rel.concept_b,
-                relationship_types=rel.relationship_types,
-            ),
-        )
-        for rel in state.infer_relationships
-    ]
 
 
 def create_infer_relationship_graph():

@@ -78,6 +78,7 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
     """
     LangGraph node that extracts content from web pages.
     """
+    node, key = state.node_key
     try:
         # Extract content from URL
         article = Crawler().crawl(state.url)
@@ -85,7 +86,6 @@ def content_extractor(state: ContentExtractState, config: RunnableConfig) -> dic
             url=state.url, title=article.title, content=article.content
         )
         output_str = to_yaml(source)
-        node, key = state.node_key
         messages = make_message_entry(
             node,
             key,

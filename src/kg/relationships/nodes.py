@@ -10,29 +10,35 @@ from src.db.pkg_interface import PKGInterface
 from src.kg.base_models import ConceptNode, Relationship, RelationshipType
 from src.kg.relationships.prompts import infer_relationships_instructions
 from src.kg.relationships.schemas import InferredRelationship
-from src.kg.state import ConceptResearchState, InferRelationshipState
-from src.kg.utils import llm_with_retry
+from src.kg.state import (
+    ConceptResearchState,
+    InferRelationshipsState,
+    InferRelationshipState,
+)
+from src.kg.utils import llm_with_retry, to_yaml
 from src.llms.llm import get_embedding_model, get_llm_by_type
 
 
 def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
-    """
-    LangGraph node that searches for related concepts in PKG
-    """
+    """LangGraph node that searches for related concepts in PKG."""
+
     # Generate embedding for definition and search PKG for related concepts
     try:
         embeddings = get_embedding_model()
-        definition_embedding = embeddings.embed_query(state.opt_concept.definition)
+        definition_embedding = embeddings.embed_query(state.definition)
         pkg_interface = PKGInterface()
         relevant_subgraph = pkg_interface.vector_search_definition(
             definition_embedding,
             limit=3,
-            similarity_threshold=0.9,
+            similarity_threshold=0.5,
         )
         # Get related concepts from PKG
         related_concepts = [
-            InferRelationshipState(concept_a=state.concept, concept_b=concept)
+            InferRelationshipState(
+                concept_a=state.profile.concept, concept_b=concept.profile
+            )
             for concept in list(relevant_subgraph.nodes.values())
+            if concept.profile and state.profile
         ]
 
         return {
@@ -45,19 +51,28 @@ def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) ->
         }
 
 
+def send_to_infer_relationship(
+    state: InferRelationshipsState, config: RunnableConfig
+) -> List[Send]:
+    """
+    LangGraph routing function that determines next step after merging related concepts.
+    """
+    return [
+        Send(
+            "infer_relationship",
+            InferRelationshipState(
+                concept_a=rel.concept_a,
+                concept_b=rel.concept_b,
+                relationship_types=rel.relationship_types,
+            ),
+        )
+        for rel in state.infer_relationships
+    ]
+
+
 def infer_relationship(state: InferRelationshipState, config: RunnableConfig) -> dict:
-    """
-    LangGraph node for relationship inference between a pair of concept nodes.
+    """LangGraph node for relationship inference between a pair of concept nodes."""
 
-    Args:
-        concept_a: First concept node
-        concept_b: Second concept node
-        relationship_types: List of relationship types to consider
-        (default: [IS_TYPE_OF, IS_PART_OF, IS_DUPLICATE_OF])
-
-    Returns:
-        Relationship object if one exists, None otherwise
-    """
     # Get the config
     configurable = Configuration.from_runnable_config(config)
     # Initialization
@@ -68,51 +83,51 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
         RelationshipType.IS_PART_OF,
     ]
     rel_types = set(rel_types).union([RelationshipType.NO_RELATIONSHIP])
-    # Create relationship type definitions
-    type_definitions = []
-    for rel_type in rel_types:
-        type_definitions.append(f"- {rel_type.code}: {rel_type.description}")
-    type_definitions_str = "\n".join(type_definitions)
+
     # Initialize LLM
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
+
     # Build the prompt
     infer_rel_prompt = infer_relationships_instructions.format(
-        concept_a=concept_a,
-        concept_b=concept_b,
-        type_definitions_str=type_definitions_str,
+        concept_a_str=to_yaml(concept_a),
+        concept_b_str=to_yaml(concept_b),
+        types_str=to_yaml([rel.code for rel in rel_types]),
     )
     rels = []
     try:
         # Use dynamic schema
         RelationshipModel = InferredRelationship.with_types(rel_types)
-        rel = llm_with_retry(llm, RelationshipModel, infer_rel_prompt)
-        # Determine source and target based on relationship type
-        src, tar = (
-            (concept_a.id, concept_b.id)
-            if rel.direction == 1
-            else (concept_a.id, concept_b.id)
+        inference: InferredRelationship = llm_with_retry(
+            llm, RelationshipModel, infer_rel_prompt
         )
+
+        # Check if a relationship was found / is strong enough
+        if (
+            inference.relationship_type == RelationshipType.NO_RELATIONSHIP.code
+            or inference.confidence < 0.5
+        ):
+            return {"relationships": []}
+
+        # Determine source and target based on the inferred direction
+        if inference.direction == 1:
+            src, tar = concept_a.id, concept_b.id
+        else:
+            src, tar = concept_b.id, concept_a.id
+
+        # Convert code string -> RelationshipType enum member
+        rel_type = RelationshipType[inference.relationship_type]
+
         # Create the relationship
-        if src and tar:
-            rel = Relationship(
-                id=str(uuid.uuid4()),
+        rels = [
+            Relationship(
                 source_node_id=src,
                 target_node_id=tar,
-                type=RelationshipType(rel.relationship_type),
-                discovery_count_llm_inference=1,
-                source_urls=rel.sources,
-                type_confidence_llm=rel.confidence,
-                existence_confidence_llm=rel.confidence,
-                last_updated_timestamp=datetime.now(),
+                type=rel_type,
+                discovery_count=1,
+                profile=inference.model_dump(),
             )
-            rels = [rel]
-        # Check if a relationship was found
-        if (
-            rel.relationship_type == RelationshipType.NO_RELATIONSHIP
-            or rel.confidence < 0.5
-        ):
-            rels = []
+        ]
 
     except (ValidationError, Exception):
         rels = []
@@ -122,9 +137,7 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
 def route_after_related(
     state: ConceptResearchState, config: RunnableConfig
 ) -> List[Send]:
-    """
-    LangGraph routing function for next step in relationship inference.
-    """
+    """LangGraph routing function for next step in relationship inference."""
 
     if len(state.related_concepts) > 0:
         return [
@@ -143,9 +156,8 @@ def route_after_related(
 
 
 def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
-    """
-    LangGraph node that merges related concepts into the AWG.
-    """
+    """LangGraph node that merges related concepts into the AWG."""
+
     # Prepare working variables
     awg_context = state.awg_context
     pkg_interface = PKGInterface()
@@ -153,9 +165,9 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         id=state.concept.id or str(uuid.uuid4()),
         name=state.concept.name,
         node_type=state.concept.node_type,
-        definition=state.opt_concept.definition,
-        definition_confidence_llm=state.opt_concept.confidence,
-        last_updated_timestamp=datetime.now(),
+        profile=state.profile.concept,
+        evaluation=state.profile.evaluation,
+        updated_at=datetime.now(),
     )
     # Ensure the defined concept exists in AWG
     awg_context.add_node(concept_defined)
@@ -184,11 +196,7 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         elif relationship.type == RelationshipType.IS_TYPE_OF:
             awg_context.add_relationship(relationship)
         elif relationship.type == RelationshipType.IS_DUPLICATE_OF:
-            if (
-                duplicate is None
-                or duplicate.existence_confidence_llm
-                < relationship.existence_confidence_llm
-            ):
+            if duplicate is None or duplicate.confidence < relationship.confidence:
                 duplicate = relationship
 
     if duplicate:

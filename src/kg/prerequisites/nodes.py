@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import List
 
+from bs4 import Tag
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import RunnableConfig
 
@@ -142,7 +143,7 @@ def _get_existing_prerequisites(
             for prereq in state.awg_context.get_target_neighbors(
                 state.concept.id, RelationshipType.HAS_PREREQUISITE
             )
-            if prereq.get_status() != ConceptNodeStatus.STUB
+            if prereq.infer_status() != ConceptNodeStatus.STUB
         }
     )
 
@@ -948,15 +949,6 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
     """
     awg_context = state.awg_context.deep_copy()
 
-    # Already-linked prerequisites for this concept (avoid duplicates)
-    existing_names = {
-        awg_context.get_node(rel.target_node_id).name.lower()
-        for rel in awg_context.get_relationships_by_source(
-            state.concept.id, RelationshipType.HAS_PREREQUISITE
-        )
-        if awg_context.get_node(rel.target_node_id) is not None
-    }
-
     # Get prerequisite state and its accepted candidates
     prereq_state = state.prerequisites
     if prereq_state is None or not prereq_state.accepted:
@@ -964,46 +956,35 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
 
     # Merge all accepted candidates as HAS_PREREQUISITE relationships
     for profile in prereq_state.accepted:
-        candidate = profile.concept
-        name = candidate.name
-        lname = name.lower()
-
-        # Avoid duplicates for this concept
-        if lname in existing_names:
+        # Check if existing prerequisite
+        if isinstance(profile.concept, ConceptNode):
             continue
 
-        # Try to reuse an existing node by name (case-insensitive)
-        existing_node = None
-        for node in awg_context.nodes.values():
-            if node.name.lower() == lname:
-                existing_node = node
-                break
-
-        if existing_node is None:
-            prereq_node = ConceptNode(
-                id=str(uuid.uuid4()),
-                name=candidate.name,
-                definition=candidate.definition,
-                last_updated_timestamp=datetime.now(),
+        # Get any existing node
+        if profile.concept.source == "existing":
+            target_id = getattr(
+                awg_context.get_node_by_name(
+                    profile.concept.name, approx_threshold=0.95
+                ),
+                "id",
+                None,
             )
+            if not target_id:
+                continue
+        # Create new stub node
+        else:
+            prereq_node = ConceptNode(name=profile.concept.name)
             awg_context.add_node(prereq_node)
             target_id = prereq_node.id
-        else:
-            target_id = existing_node.id
 
-        # Use candidate-level confidence directly (no extra thresholds for now)
-        conf = candidate.confidence
+        # Create the relationship
         prereq_rel = Relationship(
             id=str(uuid.uuid4()),
             source_node_id=state.concept.id,
             target_node_id=target_id,
             type=RelationshipType.HAS_PREREQUISITE,
-            description=candidate.rationale,
-            discovery_count_llm_inference=1,
-            sources=candidate.sources or [],
-            type_confidence_llm=conf,
-            existence_confidence_llm=conf,
-            last_updated_timestamp=datetime.now(),
+            profile=profile.concept.model_dump(),
+            discovery_count=1,
         )
         awg_context.add_relationship(prereq_rel)
 

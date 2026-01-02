@@ -66,40 +66,57 @@ def _build_context(
     context_parts.append("\n## CONCEPT RELATIONSHIPS")
 
     # Direct prerequisites from KG
-    prerequisite_rels = awg_context.get_relationships_by_target(concept_node.id)
+    # Stored semantics: A HAS_PREREQUISITE B means B must be taught before A,
+    # so prerequisites are on outgoing edges from the concept (A -> B).
+    prerequisite_rels = awg_context.get_relationships_by_source(concept_node.id)
     direct_prerequisites = [
         rel for rel in prerequisite_rels if rel.type.code == "HAS_PREREQUISITE"
     ]
     if direct_prerequisites:
         context_parts.append("**Direct Prerequisites**:")
         for rel in direct_prerequisites:
-            prereq_node = awg_context.get_node(rel.source_node_id)
+            prereq_node = awg_context.get_node(rel.target_node_id)
             if prereq_node:
                 context_parts.append(f"- {prereq_node.name}")
 
     # What this concept enables
-    enabled_rels = awg_context.get_relationships_by_source(concept_node.id)
+    enabled_rels = awg_context.get_relationships_by_target(concept_node.id)
     enables = [rel for rel in enabled_rels if rel.type.code == "HAS_PREREQUISITE"]
     if enables:
         context_parts.append("**This concept enables**:")
         for rel in enables:
-            enabled_node = awg_context.get_node(rel.target_node_id)
+            enabled_node = awg_context.get_node(rel.source_node_id)
             if enabled_node:
                 context_parts.append(f"- {enabled_node.name}")
 
     # Type and part relationships
-    type_rels = [
+    # Stored semantics (post-inference):
+    # - IS_TYPE_OF: A -> B means A is a type/instance of B (teach B before A)
+    # - IS_PART_OF: A -> B means A is a component/part of B (teach A before B)
+    is_type_of = [
         rel
-        for rel in prerequisite_rels
-        if rel.type.code in ["IS_TYPE_OF", "IS_PART_OF"]
+        for rel in awg_context.get_relationships_by_source(concept_node.id)
+        if rel.type.code == "IS_TYPE_OF"
     ]
-    if type_rels:
+    is_part_of = [
+        rel
+        for rel in awg_context.get_relationships_by_source(concept_node.id)
+        if rel.type.code == "IS_PART_OF"
+    ]
+
+    if is_type_of or is_part_of:
         context_parts.append("**Concept Classification**:")
-        for rel in type_rels:
-            parent_node = awg_context.get_node(rel.source_node_id)
+        for rel in is_type_of:
+            parent_node = awg_context.get_node(rel.target_node_id)
             if parent_node:
                 context_parts.append(
-                    f"- {concept_node.name} {rel.type.code.lower().replace('_', ' ')} {parent_node.name}"
+                    f"- {concept_node.name} is a type of {parent_node.name}"
+                )
+        for rel in is_part_of:
+            whole_node = awg_context.get_node(rel.target_node_id)
+            if whole_node:
+                context_parts.append(
+                    f"- {concept_node.name} is part of {whole_node.name}"
                 )
 
     # 5. Educational Instructions

@@ -1,4 +1,5 @@
-"""Neo4j Persistent Knowledge Graph Interface (PKGInterface).
+"""
+Neo4j Persistent Knowledge Graph Interface (PKGInterface).
 
 This module provides the PKGInterface class that handles interactions with
 the Neo4j knowledge graph following the agent framework specification.
@@ -11,24 +12,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.db.neo4j_client import Neo4jClient
 from src.kg.agent_working_graph import AgentWorkingGraph
-from src.kg.base_models import (
-    ConceptNode,
-    ConceptNodeStatus,
-    EvidenceAtom,
-    Relationship,
-    RelationshipType,
-)
+from src.kg.base_models import ConceptNode, EvidenceAtom, Relationship, RelationshipType
 
 # Type alias for concept data
 ConceptData = Dict[str, Union[str, float, List[str], Dict[str, float]]]
 
 
 class PrerequisiteCycleException(Exception):
-    """Exception raised when a relationship would create a cycle.
-
-    Note: This exception is used for all cycle-prone relationship types,
-    not just prerequisites. The name is maintained for backward compatibility.
-    """
+    """Exception raised when a relationship would create a cycle."""
 
     def __init__(
         self,
@@ -37,14 +28,6 @@ class PrerequisiteCycleException(Exception):
         path: List[str],
         relationship_type: str = "HAS_PREREQUISITE",
     ):
-        """Initialize the exception.
-
-        Args:
-            source_id: ID of the source node in the relationship
-            target_id: ID of the target node in the relationship
-            path: The path that forms the cycle
-            relationship_type: Type of relationship that would create the cycle
-        """
         self.source_id = source_id
         self.target_id = target_id
         self.path = path
@@ -58,27 +41,15 @@ class PrerequisiteCycleException(Exception):
 class PKGInterface:
     """
     Persistent Knowledge Graph Interface.
-
     Provides methods to interact with Neo4j for knowledge graph operations.
     """
 
     def __init__(self, neo4j_client: Optional[Neo4jClient] = None):
-        """Initialize the PKGInterface with Neo4j connection.
-
-        Args:
-            neo4j_client: Optional Neo4jClient instance. If not provided, a new one will be created.
-        """
         self.neo4j_client = neo4j_client or Neo4jClient()
 
     def _parse_node_attributes(self, attributes: Any) -> Dict[str, Any]:
-        """Parse node attributes from Neo4j, handling JSON strings and empty values.
+        """Parse node attributes from Neo4j, handling JSON strings and empty values."""
 
-        Args:
-            attributes: Raw attributes value from Neo4j
-
-        Returns:
-            Parsed attributes dictionary
-        """
         if not attributes:
             return {}
 
@@ -93,178 +64,32 @@ class PKGInterface:
 
         return {}
 
-    def _parse_node_data(self, node: Any) -> Dict[str, Any]:
-        """Parse Neo4j node data into a standardized dictionary.
+    def _create_concept_node(self, node_data: Any) -> Optional[ConceptNode]:
+        """Create a ConceptNode from parsed node data."""
 
-        Args:
-            node: Neo4j node object
-
-        Returns:
-            Dictionary with node properties
-        """
-        if not node:
-            return {}
-
-        # Handle different ways Neo4j might return node data
-        if hasattr(node, "get"):
-            # Node object with get method
-            node_data = {
-                "id": node.get("id"),
-                "name": node.get("name"),
-                "topic": node.get("topic", ""),
-                "definition": node.get("definition"),
-                "node_type": node.get("node_type", "concept"),
-                "exists_in_pkg": node.get("exists_in_pkg", False),
-                "discovery_count_search": node.get("discovery_count_search", 0),
-                "discovery_count_llm_inference": node.get(
-                    "discovery_count_llm_inference", 0
-                ),
-                "research_results": node.get("research_results", []),
-                "pages_analyzed_count": node.get("pages_analyzed_count", 0),
-                "definition_confidence_llm": node.get("definition_confidence_llm", 0.0),
-                "last_updated_timestamp": node.get(
-                    "last_updated_timestamp", datetime.now()
-                ),
-                "status": node.get("status", ConceptNodeStatus.STUB.value),
-                "name_embedding": node.get("name_embedding"),
-                "topic_embedding": node.get("topic_embedding"),
-                "definition_embedding": node.get("definition_embedding"),
-            }
-        elif hasattr(node, "__getitem__"):
-            # Dictionary-like access
-            try:
-                node_data = {
-                    "id": node.get("id") if hasattr(node, "get") else node["id"],
-                    "name": (
-                        node.get("name") if hasattr(node, "get") else node.get("name")
-                    ),
-                    "topic": (
-                        node.get("topic", "")
-                        if hasattr(node, "get")
-                        else node.get("topic", "")
-                    ),
-                    "definition": (
-                        node.get("definition")
-                        if hasattr(node, "get")
-                        else node.get("definition")
-                    ),
-                    "node_type": (
-                        node.get("node_type", "concept")
-                        if hasattr(node, "get")
-                        else node.get("node_type", "concept")
-                    ),
-                    "exists_in_pkg": (
-                        node.get("exists_in_pkg", False)
-                        if hasattr(node, "get")
-                        else node.get("exists_in_pkg", False)
-                    ),
-                    "discovery_count_search": (
-                        node.get("discovery_count_search", 0)
-                        if hasattr(node, "get")
-                        else node.get("discovery_count_search", 0)
-                    ),
-                    "discovery_count_llm_inference": (
-                        node.get("discovery_count_llm_inference", 0)
-                        if hasattr(node, "get")
-                        else node.get("discovery_count_llm_inference", 0)
-                    ),
-                    "research_results": (
-                        node.get("research_results", [])
-                        if hasattr(node, "get")
-                        else node.get("research_results", [])
-                    ),
-                    "pages_analyzed_count": (
-                        node.get("pages_analyzed_count", 0)
-                        if hasattr(node, "get")
-                        else node.get("pages_analyzed_count", 0)
-                    ),
-                    "definition_confidence_llm": (
-                        node.get("definition_confidence_llm", 0.0)
-                        if hasattr(node, "get")
-                        else node.get("definition_confidence_llm", 0.0)
-                    ),
-                    "last_updated_timestamp": (
-                        node.get("last_updated_timestamp", datetime.now())
-                        if hasattr(node, "get")
-                        else node.get("last_updated_timestamp", datetime.now())
-                    ),
-                    "status": (
-                        node.get("status", ConceptNodeStatus.STUB.value)
-                        if hasattr(node, "get")
-                        else node.get("status", ConceptNodeStatus.STUB.value)
-                    ),
-                    "name_embedding": (
-                        node.get("name_embedding")
-                        if hasattr(node, "get")
-                        else node.get("name_embedding")
-                    ),
-                    "topic_embedding": (
-                        node.get("topic_embedding")
-                        if hasattr(node, "get")
-                        else node.get("topic_embedding")
-                    ),
-                    "definition_embedding": (
-                        node.get("definition_embedding")
-                        if hasattr(node, "get")
-                        else node.get("definition_embedding")
-                    ),
-                }
-            except (KeyError, TypeError):
-                return {}
-        else:
-            # Fallback for unexpected node types
-            return {}
-
-        return node_data
-
-    def _create_concept_node(self, node_data: Dict[str, Any]) -> Optional[ConceptNode]:
-        """Create a ConceptNode from parsed node data.
-
-        Args:
-            node_data: Dictionary with node properties
-
-        Returns:
-            ConceptNode instance or None if data is invalid
-        """
         try:
             if not node_data or not node_data.get("id"):
                 return None
 
             return ConceptNode(
                 id=node_data["id"],
-                name=node_data.get("name", ""),
+                name=node_data.get("name"),
                 topic=node_data.get("topic", ""),
-                definition=node_data.get("definition"),
+                profile=node_data.get("profile"),
+                evaluation=node_data.get("evaluation"),
                 node_type=node_data.get("node_type", "concept"),
                 exists_in_pkg=node_data.get("exists_in_pkg", False),
-                definition_research=node_data.get("definition_research", []),
-                definition_confidence_llm=node_data.get(
-                    "definition_confidence_llm", 0.0
-                ),
-                last_updated_timestamp=node_data.get(
-                    "last_updated_timestamp", datetime.now()
-                ),
-                defined_status=ConceptNodeStatus(
-                    node_data.get("status", ConceptNodeStatus.STUB.value)
-                ),
-                name_embedding=node_data.get("name_embedding"),
-                topic_embedding=node_data.get("topic_embedding"),
-                definition_embedding=node_data.get("definition_embedding"),
+                updated_at=node_data.get("updated_at", datetime.fromtimestamp(0)),
+                name_embedding=node_data.get("name_embedding", []),
+                topic_embedding=node_data.get("topic_embedding", []),
+                definition_embedding=node_data.get("definition_embedding", []),
             )
         except (ValueError, TypeError):
-            # Log the error or handle it appropriately
             return None
 
     def get_node_by_id(self, node_id: str) -> Optional[ConceptNode]:
-        """
-        Get a node from Neo4j by ID.
+        """Get a node from Neo4j by ID."""
 
-        Args:
-            node_id: The ID of the node to retrieve
-
-        Returns:
-            ConceptNode if found, None otherwise
-        """
         query = """
         MATCH (n:Concept {id: $id})
         RETURN n
@@ -277,21 +102,13 @@ class PKGInterface:
                 if not record:
                     return None
 
-                node_data = self._parse_node_data(record["n"])
-                return self._create_concept_node(node_data)
+                return self._create_concept_node(record["n"])
         except Exception:
             return None
 
     def find_or_create_node(self, node_data: ConceptNode) -> ConceptNode:
-        """
-        Find or create a node in Neo4j.
+        """Find or create a node in Neo4j."""
 
-        Args:
-            node_data: The node data to find or create
-
-        Returns:
-            The found or created ConceptNode with updated ID
-        """
         # Check if node exists
         existing_node = self.get_node_by_id(node_data.id)
 
@@ -308,24 +125,13 @@ class PKGInterface:
         # Convert node data to properties dict
         node_props = node_data.model_dump()
 
-        # Convert enum values to strings for Neo4j
-        node_props["status"] = node_data.status.value
-
-        # Convert research sources into yaml for Neo4j
-        node_props["definition_research"] = [
-            research_output.to_yaml()
-            for research_output in node_data.definition_research
-        ]
-        node_props["prerequisites_research"] = [
-            research_output.to_yaml()
-            for research_output in node_data.prerequisites_research
-        ]
-
         # Convert datetime to ISO format for Neo4j
-        if isinstance(node_props.get("last_updated_timestamp"), datetime):
-            node_props["last_updated_timestamp"] = node_props[
-                "last_updated_timestamp"
-            ].isoformat()
+        if isinstance(node_props.get("updated_at"), datetime):
+            node_props["updated_at"] = node_props["updated_at"].isoformat()
+
+        # Convert profile/evaluation to JSON string for Neo4j
+        node_props["profile"] = json.dumps(node_props.get("profile"))
+        node_props["evaluation"] = json.dumps(node_props.get("evaluation"))
 
         # Handle None embedding vectors by converting to empty lists
         for embedding_field in [
@@ -351,17 +157,8 @@ class PKGInterface:
     def detect_relationship_cycle(
         self, source_id: str, target_id: str, relationship_type: RelationshipType
     ) -> Tuple[bool, Optional[List[str]]]:
-        """
-        Check if creating a relationship from source to target would create a cycle for the given relationship type.
+        """Check if creating a relationship from source to target would create a cycle for the given relationship type."""
 
-        Args:
-            source_id: Source node ID
-            target_id: Target node ID
-            relationship_type: Type of relationship to check for cycles
-
-        Returns:
-            A tuple (has_cycle, path). If has_cycle is True, path contains the nodes in the cycle.
-        """
         # Only check cycles for directional relationships that could form meaningful cycles
         cycle_prone_types = [
             RelationshipType.HAS_PREREQUISITE,
@@ -393,38 +190,9 @@ class PKGInterface:
         except Exception:
             return False, None
 
-    def detect_prerequisites_cycle(
-        self, source_id: str, target_id: str
-    ) -> Tuple[bool, Optional[List[str]]]:
-        """
-        Check if creating a HAS_PREREQUISITE relationship from source to target would create a cycle.
-
-        This method is maintained for backward compatibility.
-
-        Args:
-            source_id: Source node ID
-            target_id: Target node ID
-
-        Returns:
-            A tuple (has_cycle, path). If has_cycle is True, path contains the nodes in the cycle.
-        """
-        return self.detect_relationship_cycle(
-            source_id, target_id, RelationshipType.HAS_PREREQUISITE
-        )
-
     def find_or_create_relationship(self, rel_data: Relationship) -> Relationship:
-        """
-        Find or create a relationship in Neo4j.
+        """Find or create a relationship in Neo4j."""
 
-        Args:
-            rel_data: The relationship data to find or create
-
-        Returns:
-            The found or created Relationship with updated ID
-
-        Raises:
-            PrerequisiteCycleException: If adding a HAS_PREREQUISITE relationship would create a cycle
-        """
         # If relationship has no ID, generate one
         if rel_data.id is None:
             rel_data.id = str(uuid.uuid4())
@@ -488,35 +256,17 @@ class PKGInterface:
 
                 if record:
                     # Relationship exists, merge the data
-                    existing_rel_dict = dict(record["r"].items())
+                    existing_dict = dict(record["r"].items())
 
                     # Create existing relationship object
                     existing_rel = Relationship(
-                        id=existing_rel_dict.get("id"),
+                        id=existing_dict.get("id"),
                         source_node_id=rel_data.source_node_id,
                         target_node_id=rel_data.target_node_id,
                         type=rel_type,
-                        description=existing_rel_dict.get("description"),
-                        discovery_count_search=existing_rel_dict.get(
-                            "discovery_count_search", 0
-                        ),
-                        discovery_count_llm_inference=existing_rel_dict.get(
-                            "discovery_count_llm_inference", 0
-                        ),
-                        sources=[
-                            EvidenceAtom(**source)
-                            for source in existing_rel_dict.get("sources", [])
-                        ],
-                        source_urls=existing_rel_dict.get("source_urls", []),
-                        type_confidence_llm=existing_rel_dict.get(
-                            "type_confidence_llm", 0.0
-                        ),
-                        existence_confidence_llm=existing_rel_dict.get(
-                            "existence_confidence_llm", 0.0
-                        ),
-                        last_updated_timestamp=existing_rel_dict.get(
-                            "last_updated_timestamp", datetime.now()
-                        ),
+                        profile=existing_dict.get("profile"),
+                        discovery_count=existing_dict.get("discovery_count", 0),
+                        updated_at=existing_dict.get("updated_at", datetime.now()),
                     )
 
                     # Merge new data into existing relationship
@@ -535,11 +285,12 @@ class PKGInterface:
                 rel_props.pop("target_node_id", None)
                 rel_props.pop("type", None)
 
+                # Convert profile to JSON string for Neo4j
+                rel_props["profile"] = json.dumps(rel_props.get("profile"))
+
                 # Convert datetime to ISO format for Neo4j
-                if isinstance(rel_props.get("last_updated_timestamp"), datetime):
-                    rel_props["last_updated_timestamp"] = rel_props[
-                        "last_updated_timestamp"
-                    ].isoformat()
+                if isinstance(rel_props.get("updated_at"), datetime):
+                    rel_props["updated_at"] = rel_props["updated_at"].isoformat()
 
                 create_query = f"""
                 MATCH (source:Concept {{id: $source_id}})
@@ -570,30 +321,16 @@ class PKGInterface:
     def _merge_relationships(
         self, existing_rel: Relationship, new_rel: Relationship
     ) -> Relationship:
-        """
-        Merge a new relationship into an existing relationship, taking higher confidence values.
+        """Merge a new relationship into an existing relationship, taking higher confidence values."""
 
-        Args:
-            existing_rel: The existing relationship in the database
-            new_rel: The new relationship data to merge
-
-        Returns:
-            Merged relationship with updated values
-        """
         # Create a copy of the existing relationship to avoid modifying the original
         merged_rel = Relationship(
             id=existing_rel.id,
             source_node_id=existing_rel.source_node_id,
             target_node_id=existing_rel.target_node_id,
             type=existing_rel.type,
-            description=existing_rel.description,
-            discovery_count_search=existing_rel.discovery_count_search,
-            discovery_count_llm_inference=existing_rel.discovery_count_llm_inference,
-            source_urls=existing_rel.source_urls.copy(),
-            sources=existing_rel.sources.copy(),
-            type_confidence_llm=existing_rel.type_confidence_llm,
-            existence_confidence_llm=existing_rel.existence_confidence_llm,
-            last_updated_timestamp=existing_rel.last_updated_timestamp,
+            discovery_count=existing_rel.discovery_count,
+            profile=existing_rel.profile.model_copy(),
         )
 
         # Use the relationship's built-in merge method
@@ -602,12 +339,8 @@ class PKGInterface:
         return merged_rel
 
     def _update_relationship(self, relationship: Relationship) -> None:
-        """
-        Update an existing relationship in Neo4j with new properties.
+        """Update an existing relationship in Neo4j with new properties."""
 
-        Args:
-            relationship: The relationship to update
-        """
         rel_type = (
             relationship.type.code
             if isinstance(relationship.type, RelationshipType)
@@ -623,11 +356,12 @@ class PKGInterface:
         rel_props.pop("target_node_id", None)
         rel_props.pop("type", None)
 
+        # Convert profile to JSON string for Neo4j
+        rel_props["profile"] = json.dumps(rel_props.get("profile"))
+
         # Convert datetime to ISO format for Neo4j
-        if isinstance(rel_props.get("last_updated_timestamp"), datetime):
-            rel_props["last_updated_timestamp"] = rel_props[
-                "last_updated_timestamp"
-            ].isoformat()
+        if isinstance(rel_props.get("updated_at"), datetime):
+            rel_props["updated_at"] = rel_props["updated_at"].isoformat()
 
         query = f"""
         MATCH (source:Concept {{id: $source_id}})-[r:{rel_type}]->(target:Concept {{id: $target_id}})
@@ -652,21 +386,12 @@ class PKGInterface:
 
     def commit_changes(
         self,
-        nodes_to_upsert: List[Union[ConceptNode, Dict[str, Any]]],
-        edges_to_upsert: List[Union[Relationship, Dict[str, Any]]],
-        nodes_to_delete: Optional[List[Union[ConceptNode, Dict[str, Any]]]] = None,
+        upsert_nodes: List[Union[ConceptNode, Dict[str, Any]]],
+        upsert_edges: List[Union[Relationship, Dict[str, Any]]],
+        delete_nodes: Optional[List[Union[ConceptNode, Dict[str, Any]]]] = None,
     ) -> Dict[str, List[Union[str, Dict[str, str]]]]:
-        """
-        Commit changes to Neo4j.
+        """Commit changes to Neo4j."""
 
-        Args:
-            nodes_to_upsert: List of nodes to create or update (ConceptNode objects or dictionaries)
-            edges_to_upsert: List of relationships to create or update (Relationship objects or dictionaries)
-            nodes_to_delete: Optional list of nodes to delete (ConceptNode objects or dictionaries)
-
-        Returns:
-            Dictionary with lists of committed and rejected changes
-        """
         result = {
             "committed_nodes": [],
             "committed_edges": [],
@@ -676,7 +401,7 @@ class PKGInterface:
         }
 
         # Process nodes first
-        for node_data in nodes_to_upsert:
+        for node_data in upsert_nodes:
             try:
                 # Convert dictionary to ConceptNode if needed
                 if isinstance(node_data, dict):
@@ -695,7 +420,7 @@ class PKGInterface:
                 result["errors"].append({"node_id": node_id, "error": str(e)})
 
         # Process edges
-        for edge_data in edges_to_upsert:
+        for edge_data in upsert_edges:
             try:
                 # Convert dictionary to Relationship if needed
                 if isinstance(edge_data, dict):
@@ -797,8 +522,8 @@ class PKGInterface:
                 )
 
         # Process node deletions
-        if nodes_to_delete:
-            for node_data in nodes_to_delete:
+        if delete_nodes:
+            for node_data in delete_nodes:
                 try:
                     # Extract node ID from either ConceptNode object or dictionary
                     if isinstance(node_data, dict):
@@ -835,16 +560,8 @@ class PKGInterface:
         return result
 
     def fetch_subgraph(self, node_ids: List[str], depth: int = 2) -> AgentWorkingGraph:
-        """
-        Fetch a relevant subgraph from Neo4j.
+        """Fetch a relevant subgraph from Neo4j."""
 
-        Args:
-            node_ids: List of node IDs to start from
-            depth: How many hops to traverse
-
-        Returns:
-            An AgentWorkingGraph containing the subgraph
-        """
         working_graph = AgentWorkingGraph()
 
         # Fetch relevant nodes and their relationships
@@ -864,8 +581,7 @@ class PKGInterface:
 
                     # Process nodes in the path
                     for node in path.nodes:
-                        node_data = self._parse_node_data(node)
-                        concept_node = self._create_concept_node(node_data)
+                        concept_node = self._create_concept_node(node)
 
                         if concept_node and concept_node.id not in working_graph.nodes:
                             working_graph.add_node(concept_node)
@@ -879,21 +595,9 @@ class PKGInterface:
                                 source_node_id=rel.start_node.get("id"),
                                 target_node_id=rel.end_node.get("id"),
                                 type=rel.type,
-                                discovery_count_search=rel.get(
-                                    "discovery_count_search", 0
-                                ),
-                                discovery_count_llm_inference=rel.get(
-                                    "discovery_count_llm_inference", 0
-                                ),
-                                source_urls=rel.get("source_urls", []),
-                                sources=rel.get("sources", []),
-                                type_confidence_llm=rel.get("type_confidence_llm", 0.0),
-                                existence_confidence_llm=rel.get(
-                                    "existence_confidence_llm", 0.0
-                                ),
-                                last_updated_timestamp=rel.get(
-                                    "last_updated_timestamp", datetime.now()
-                                ),
+                                discovery_count=rel.get("discovery_count", 0),
+                                profile=rel.get("profile"),
+                                updated_at=rel.get("updated_at", datetime.now()),
                             )
                             working_graph.add_relationship(relationship)
         except Exception:
@@ -903,15 +607,8 @@ class PKGInterface:
         return working_graph
 
     def _delete_node_by_id(self, node_id: str) -> bool:
-        """
-        Delete a node and all its relationships from Neo4j.
+        """Delete a node and all its relationships from Neo4j."""
 
-        Args:
-            node_id: The ID of the node to delete
-
-        Returns:
-            True if successful, False otherwise
-        """
         query = """
         MATCH (n:Concept {id: $node_id})
         DETACH DELETE n
@@ -926,144 +623,97 @@ class PKGInterface:
         except Exception:
             return False
 
-    def update_node_name_embedding(
-        self, node_id: str, embedding_vector: List[float]
-    ) -> bool:
-        """
-        Update the name embedding vector for a node in Neo4j.
-
-        Args:
-            node_id: The ID of the node to update
-            embedding_vector: The name embedding vector to store
-
-        Returns:
-            True if successful, False otherwise
-        """
-        query = """
-        MATCH (n:Concept {id: $node_id})
-        SET n.name_embedding = $embedding_vector
-        RETURN n
-        """
-
-        try:
-            with self.neo4j_client.driver.session() as session:
-                result = session.run(
-                    query, {"node_id": node_id, "embedding_vector": embedding_vector}
-                )
-                return result.single() is not None
-        except Exception:
-            return False
-
-    def update_node_topic_embedding(
-        self, node_id: str, embedding_vector: List[float]
-    ) -> bool:
-        """
-        Update the topic embedding vector for a node in Neo4j.
-
-        Args:
-            node_id: The ID of the node to update
-            embedding_vector: The topic embedding vector to store
-
-        Returns:
-            True if successful, False otherwise
-        """
-        query = """
-        MATCH (n:Concept {id: $node_id})
-        SET n.topic_embedding = $embedding_vector
-        RETURN n
-        """
-
-        try:
-            with self.neo4j_client.driver.session() as session:
-                result = session.run(
-                    query, {"node_id": node_id, "embedding_vector": embedding_vector}
-                )
-                return result.single() is not None
-        except Exception:
-            return False
-
-    def update_node_definition_embedding(
-        self, node_id: str, embedding_vector: List[float]
-    ) -> bool:
-        """
-        Update the definition embedding vector for a node in Neo4j.
-
-        Args:
-            node_id: The ID of the node to update
-            embedding_vector: The definition embedding vector to store
-
-        Returns:
-            True if successful, False otherwise
-        """
-        query = """
-        MATCH (n:Concept {id: $node_id})
-        SET n.definition_embedding = $embedding_vector
-        RETURN n
-        """
-
-        try:
-            with self.neo4j_client.driver.session() as session:
-                result = session.run(
-                    query, {"node_id": node_id, "embedding_vector": embedding_vector}
-                )
-                return result.single() is not None
-        except Exception:
-            return False
-
-    def vector_search_definition(
+    def _vector_search(
         self,
-        definition_embedding: List[float],
+        embedding: List[float],
+        embedding_type: str,
         limit: int = 10,
         similarity_threshold: float = 0.7,
-    ) -> AgentWorkingGraph:
+        node_type_filter: Optional[str] = None,
+        return_graph: bool = False,
+        max_results: Optional[int] = None,
+    ) -> Union[List[ConceptNode], AgentWorkingGraph]:
         """
-        Fetch a relevant subgraph from Neo4j using vector similarity.
+        Generic helper function for vector similarity search.
 
         Args:
-            definition_embedding: Vector embedding to search with
-            limit: Maximum number of similar nodes to return
-            similarity_threshold: Threshold for vector similarity
+            embedding: The embedding vector to search with
+            embedding_type: The type of embedding ('name', 'topic', or 'definition')
+            limit: Maximum number of nodes to fetch from vector index
+            similarity_threshold: Minimum similarity score required
+            node_type_filter: Optional filter for node type (e.g., 'concept')
+            return_graph: If True, return AgentWorkingGraph with relationships; if False, return List[ConceptNode]
+            max_results: Optional hard limit on number of results returned (applied after similarity filtering)
 
         Returns:
-            An AgentWorkingGraph containing the subgraph
+            Either List[ConceptNode] or AgentWorkingGraph depending on return_graph parameter
         """
-        working_graph = AgentWorkingGraph()
 
-        # Fetch nodes by vector similarity
-        query = """
-        CALL db.index.vector.queryNodes('definition_embedding_index', $limit, $embedding)
+        # Map embedding type to index name
+        index_map = {
+            "name": "name_embedding_index",
+            "topic": "topic_embedding_index",
+            "definition": "definition_embedding_index",
+        }
+
+        if embedding_type not in index_map:
+            raise ValueError(
+                f"Invalid embedding_type: {embedding_type}. Must be one of {list(index_map.keys())}"
+            )
+
+        index_name = index_map[embedding_type]
+
+        # Build query with optional node type filter
+        base_query = f"""
+        CALL db.index.vector.queryNodes('{index_name}', $limit, $embedding)
         YIELD node, score
-        WHERE node.node_type = 'concept' AND score >= $similarity_threshold
+        WHERE score >= $similarity_threshold
+        """
+
+        if node_type_filter:
+            base_query += f" AND node.node_type = '{node_type_filter}'"
+
+        base_query += """
         RETURN node, score
         ORDER BY score DESC
         """
 
+        if max_results:
+            base_query += f" LIMIT {max_results}"
+
+        concepts = []
         try:
             with self.neo4j_client.driver.session() as session:
                 result = session.run(
-                    query,
+                    base_query,
                     {
-                        "embedding": definition_embedding,
+                        "embedding": embedding,
                         "similarity_threshold": similarity_threshold,
                         "limit": limit,
                     },
                 )
 
-                # Collect node IDs to find relationships
-                node_ids = []
-
                 # Process each node in the result
                 for record in result:
                     node = record["node"]
-                    node_data = self._parse_node_data(node)
-                    concept_node = self._create_concept_node(node_data)
+                    concept_node = self._create_concept_node(node)
 
                     if concept_node:
-                        node_ids.append(concept_node.id)
-                        working_graph.add_node(concept_node)
+                        concepts.append(concept_node)
 
-                # If we found nodes, fetch relationships between them
-                if node_ids:
+                # If return_graph is True, build AgentWorkingGraph with relationships
+                if return_graph:
+                    working_graph = AgentWorkingGraph()
+
+                    if not concepts:
+                        return working_graph
+
+                    # Add all found nodes to the graph
+                    for concept in concepts:
+                        working_graph.add_node(concept)
+
+                    # Fetch relationships between the found nodes
+                    node_ids = [c.id for c in concepts]
                     rel_query = """
                     MATCH (n:Concept)-[r]->(m:Concept)
                     WHERE n.id IN $node_ids AND m.id IN $node_ids
@@ -1084,28 +734,37 @@ class PKGInterface:
                                 id=rel_id,
                                 source_node_id=source_node.get("id"),
                                 target_node_id=target_node.get("id"),
-                                type=rel.type,
-                                discovery_count_search=rel.get(
-                                    "discovery_count_search", 0
-                                ),
-                                discovery_count_llm_inference=rel.get(
-                                    "discovery_count_llm_inference", 0
-                                ),
-                                source_urls=rel.get("source_urls", []),
-                                type_confidence_llm=rel.get("type_confidence_llm", 0.0),
-                                existence_confidence_llm=rel.get(
-                                    "existence_confidence_llm", 0.0
-                                ),
-                                last_updated_timestamp=rel.get(
-                                    "last_updated_timestamp", datetime.now()
-                                ),
+                                type=RelationshipType[rel.type],
+                                discovery_count=rel.get("discovery_count", 0),
+                                profile=rel.get("profile"),
+                                updated_at=rel.get("updated_at", datetime.now()),
                             )
                             working_graph.add_relationship(relationship)
-        except Exception:
-            # Return empty graph on error
-            pass
 
-        return working_graph
+                    return working_graph
+
+                # Return just the list of concepts
+                return concepts
+
+        except Exception:
+            # Return empty result on error
+            return [] if not return_graph else AgentWorkingGraph()
+
+    def vector_search_definition(
+        self,
+        definition_embedding: List[float],
+        limit: int = 10,
+        similarity_threshold: float = 0.7,
+    ) -> AgentWorkingGraph:
+        """Fetch a relevant subgraph from Neo4j using vector similarity."""
+        return self._vector_search(
+            embedding=definition_embedding,
+            embedding_type="definition",
+            limit=limit,
+            similarity_threshold=similarity_threshold,
+            node_type_filter="concept",
+            return_graph=True,
+        )
 
     def vector_search_name(
         self,
@@ -1114,73 +773,16 @@ class PKGInterface:
         similarity_threshold: float = 0.8,
         node_type: Optional[str] = None,
     ) -> List[ConceptNode]:
-        """
-        Find a goal node using vector similarity search.
-
-        Args:
-            name_embedding: Vector embedding of the name string
-            similarity_threshold: Threshold for considering a match
-
-        Returns:
-            List of ConceptNode matches
-        """
-        query = (
-            """
-            CALL db.index.vector.queryNodes('name_embedding_index', $limit, $embedding)
-            YIELD node, score
-            WHERE node.node_type = $node_type AND score >= $similarity_threshold
-            RETURN node, score
-            ORDER BY score DESC
-            LIMIT 1
-            """
-            if node_type
-            else """CALL db.index.vector.queryNodes('name_embedding_index', $limit, $embedding)
-            YIELD node, score
-            WHERE score >= $similarity_threshold
-            RETURN node, score
-            ORDER BY score DESC
-            LIMIT 1
-            """
+        """Find a goal node using vector similarity search."""
+        return self._vector_search(
+            embedding=name_embedding,
+            embedding_type="name",
+            limit=limit,
+            similarity_threshold=similarity_threshold,
+            node_type_filter=node_type,
+            return_graph=False,
+            max_results=1,
         )
-
-        try:
-            with self.neo4j_client.driver.session() as session:
-                result = (
-                    session.run(
-                        query,
-                        {
-                            "embedding": name_embedding,
-                            "similarity_threshold": similarity_threshold,
-                            "limit": limit,
-                            "node_type": node_type,
-                        },
-                    )
-                    if node_type
-                    else session.run(
-                        query,
-                        {
-                            "embedding": name_embedding,
-                            "similarity_threshold": similarity_threshold,
-                            "limit": limit,
-                        },
-                    )
-                )
-
-                # Collect nodes
-                nodes = []
-
-                # Process each node in the result
-                for record in result:
-                    node = record["node"]
-                    node_data = self._parse_node_data(node)
-                    concept_node = self._create_concept_node(node_data)
-
-                    if concept_node:
-                        nodes.append(concept_node)
-
-                return nodes
-        except Exception:
-            return []
 
     def vector_search_topic(
         self,
@@ -1188,46 +790,12 @@ class PKGInterface:
         limit: int = 10,
         similarity_threshold: float = 0.7,
     ) -> List[ConceptNode]:
-        """
-        Find concepts using topic embedding vector search.
-
-        Args:
-            topic_embedding: Vector embedding of the concept topic
-            limit: Maximum number of similar nodes to return
-            similarity_threshold: Threshold for vector similarity
-
-        Returns:
-            List of ConceptNode matches
-        """
-        query = """
-        CALL db.index.vector.queryNodes('topic_embedding_index', $limit, $embedding)
-        YIELD node, score
-        WHERE node.node_type = 'concept' AND score >= $similarity_threshold
-        RETURN node, score
-        ORDER BY score DESC
-        """
-
-        concepts = []
-        try:
-            with self.neo4j_client.driver.session() as session:
-                result = session.run(
-                    query,
-                    {
-                        "embedding": topic_embedding,
-                        "similarity_threshold": similarity_threshold,
-                        "limit": limit,
-                    },
-                )
-
-                for record in result:
-                    node = record["node"]
-                    node_data = self._parse_node_data(node)
-                    concept = self._create_concept_node(node_data)
-
-                    if concept:
-                        concepts.append(concept)
-        except Exception:
-            # Return empty list on error
-            pass
-
-        return concepts
+        """Find concepts using topic embedding vector search."""
+        return self._vector_search(
+            embedding=topic_embedding,
+            embedding_type="topic",
+            limit=limit,
+            similarity_threshold=similarity_threshold,
+            node_type_filter="concept",
+            return_graph=False,
+        )

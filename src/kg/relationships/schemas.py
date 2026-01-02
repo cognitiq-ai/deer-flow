@@ -5,6 +5,7 @@ from typing import List, Literal, Type
 from pydantic import BaseModel, Field, create_model
 
 from src.kg.base_models import RelationshipType
+from src.kg.research.schemas import EvidenceAtom
 from src.kg.utils import PydanticEnum
 
 
@@ -17,16 +18,19 @@ class InferredRelationship(BaseModel):
     direction: int = Field(
         description="Direction of the relationship (1 for A -> B, -1 for B -> A)"
     )
+    rationale: str = Field(
+        description="Rationale for the selected relationship type and direction including a clear scope of the relationship"
+    )
     confidence: float = Field(
         ge=0.0, le=1.0, description="Strength of the relationship (0.0-1.0)"
     )
-    sources: List[str] = Field(
+    sources: List[EvidenceAtom] = Field(
         default_factory=list,
-        description="Source ids (`sources.id`) from where the relationship is inferred",
+        description="Sources from the profiles of the concepts that support the relationship",
     )
 
     @classmethod
-    def with_types(cls, types: List[RelationshipType]) -> Type[BaseModel]:
+    def with_types(cls, types: List[RelationshipType]) -> Type["InferredRelationship"]:
         """
         Dynamically creates a model inheriting original descriptions and constraints
         while updating the relationship_type to a restricted Literal.

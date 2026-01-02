@@ -1,3 +1,4 @@
+import difflib
 from typing import Any, Dict, List, Optional
 
 import networkx as nx
@@ -42,9 +43,34 @@ class AgentWorkingGraph(BaseModel):
         """Get a node from the working graph by ID."""
         return self.nodes.get(node_id)
 
-    def get_node_by_name(self, name: str) -> Optional[ConceptNode]:
+    def get_node_by_name(
+        self, name: str, approx_threshold: float = 1.0
+    ) -> Optional[ConceptNode]:
         """Find a node in AWG by name."""
-        return next((node for node in self.nodes.values() if node.name == name), None)
+
+        def get_named_node(name: str):
+            return next(
+                (
+                    node
+                    for node in self.nodes.values()
+                    if node.name.lower() == name.lower()
+                ),
+                None,
+            )
+
+        match = get_named_node(name)
+        if not match:
+            node_name = next(
+                difflib.get_close_matches(
+                    name.lower(),
+                    [node.name.lower() for node in self.nodes.values()],
+                    n=1,
+                    cutoff=approx_threshold,
+                ),
+                None,
+            )
+            match = get_named_node(node_name)
+        return match
 
     def get_relationship(self, relationship_id: str) -> Optional[Relationship]:
         """Get a relationship from the working graph by ID."""
@@ -352,11 +378,6 @@ class AgentWorkingGraph(BaseModel):
                 f"Confidence: {relationship.confidence:.2f}",
             ]
 
-            if relationship.source_urls:
-                hover_lines.append(
-                    f"Sources: {len(relationship.source_urls)} references"
-                )
-
             edge_data["hover"] = "<br>".join(hover_lines)
 
         # Create the visualization
@@ -647,7 +668,7 @@ class AgentWorkingGraph(BaseModel):
         relationships = [
             rel for rel in self.relationships.values() if rel.type == relationship_type
         ]
-        return sorted(relationships, key=lambda r: r.existence_confidence_llm)
+        return sorted(relationships, key=lambda r: r.confidence)
 
     def _break_cycles_for_relationship_type(
         self, relationship_type: RelationshipType, target_graph: nx.DiGraph = None
@@ -723,9 +744,7 @@ class AgentWorkingGraph(BaseModel):
                 break  # Safety: no relationships to remove
 
             # Remove the lowest confidence relationship
-            lowest_conf_rel = min(
-                cycle_rel_objects, key=lambda r: r.existence_confidence_llm
-            )
+            lowest_conf_rel = min(cycle_rel_objects, key=lambda r: r.confidence)
 
             removed_rel_ids.append(lowest_conf_rel.id)
             del self.relationships[lowest_conf_rel.id]
@@ -813,9 +832,7 @@ class AgentWorkingGraph(BaseModel):
                 break  # Safety: no relationships to remove
 
             # Remove the lowest confidence relationship
-            lowest_conf_rel = min(
-                cycle_rel_objects, key=lambda r: r.existence_confidence_llm
-            )
+            lowest_conf_rel = min(cycle_rel_objects, key=lambda r: r.confidence)
 
             removed_rel_ids.append(lowest_conf_rel.id)
             del self.relationships[lowest_conf_rel.id]

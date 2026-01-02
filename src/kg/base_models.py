@@ -3,11 +3,12 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, field_validator
 
-from src.kg.research.models import ResearchOutput
+from src.kg.prerequisites.schemas import ConceptPrerequisite
+from src.kg.profile.schemas import ConceptProfileEvaluation, ConceptProfileOutput
 from src.kg.research.schemas import EvidenceAtom
 from src.kg.utils import EnumDescriptor, EnumMember
 
@@ -73,9 +74,6 @@ class RelationshipType(EnumDescriptor):
         """
         Defined as the final node ordering per relationship type
         Aligns all relationship types to common semantic meaning
-        HAS_PREREQUISITE: child -> parent
-        IS_PART_OF: parent -> child
-        IS_TYPE_OF: child -> parent
         """
         if self == RelationshipType.HAS_PREREQUISITE:
             return True
@@ -94,62 +92,75 @@ class ConceptNode(BaseModel):
     A concept can be a skill, topic, idea, or any other entity that can be learned.
     """
 
+    # Metadata
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str  # web scraper
     topic: str = ""  # Python
-    definition: Optional[str] = None
     node_type: str = "concept"  # Default type
     exists_in_pkg: bool = False
-
-    # Discovery metadata
-    definition_research: List[ResearchOutput] = Field(default_factory=list)
-    prerequisites_research: List[ResearchOutput] = Field(default_factory=list)
-
-    # Confidence scores
-    definition_confidence_llm: float = 0.0
+    updated_at: datetime = Field(default_factory=datetime.now)
 
     # Embedding vectors for vector search
     name_embedding: Optional[List[float]] = None
     topic_embedding: Optional[List[float]] = None
     definition_embedding: Optional[List[float]] = None
 
-    # Status and timestamps
-    last_updated_timestamp: datetime = Field(default_factory=datetime.now)
-    defined_status: Optional[ConceptNodeStatus] = None
+    # The concept profile
+    profile: Optional[ConceptProfileOutput] = None
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def parse_profile(cls, value: Any) -> Optional[ConceptProfileOutput]:
+        if value is None or isinstance(value, ConceptProfileOutput):
+            return value
+        if isinstance(value, str):
+            if value == "null":
+                return None
+            return ConceptProfileOutput.model_validate_json(value)
+        return value
+
+    # The concept evaluation
+    evaluation: Optional[ConceptProfileEvaluation] = None
+
+    @field_validator("evaluation", mode="before")
+    @classmethod
+    def parse_evaluation(cls, value: Any) -> Optional[ConceptProfileEvaluation]:
+        if value is None or isinstance(value, ConceptProfileEvaluation):
+            return value
+        if isinstance(value, str):
+            if value == "null":
+                return None
+            return ConceptProfileEvaluation.model_validate_json(value)
+        return value
 
     def __hash__(self) -> int:
         return self.id.__hash__()
 
-    def get_status(self) -> ConceptNodeStatus:
+    @property
+    def status(self) -> ConceptNodeStatus:
         """Determine concept status based on definition and confidence."""
-        if not self.definition or self.confidence == 0.0:
+        if not self.profile or self.confidence == 0.0:
             return ConceptNodeStatus.STUB
         else:
             return ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE
 
-    @computed_field(return_type=ConceptNodeStatus)
-    @property
-    def status(self) -> ConceptNodeStatus:
-        """
-        Return the status of the concept.
-        """
-        return self.defined_status or self.get_status()
-
-    @computed_field(return_type=float)
     @property
     def confidence(self) -> float:
         """
         Return the confidence of the concept.
         """
-        return self.definition_confidence_llm
+        if self.evaluation:
+            return getattr(self.evaluation, "confidence_score", 0.0)
+        return 0.0
 
-    @computed_field(return_type=str)
     @property
-    def description(self) -> str:
+    def definition(self) -> str:
         """
-        Return the description of the concept.
+        Return the definition of the concept.
         """
-        return self.definition or ""
+        if self.profile and self.profile.conceptualization:
+            return self.profile.conceptualization.definition
+        return ""
 
     def merge_node(self, node: "ConceptNode") -> None:
         """
@@ -163,26 +174,11 @@ class ConceptNode(BaseModel):
 
         # Merge information (taking higher confidence values, merging lists)
         if node.confidence > self.confidence:
-            self.definition = node.definition
-            self.definition_confidence_llm = node.definition_confidence_llm
+            self.profile = node.profile
             self.definition_embedding = node.definition_embedding
 
-        # Merge research results (ensure uniqueness)
-        existing_results = set(self.definition_research)
-        new_results = set(node.definition_research)
-        self.definition_research = list(existing_results.union(new_results))
-
-        # Update status if the new node has a better status
-        if (
-            node.status != ConceptNodeStatus.STUB
-            and self.status == ConceptNodeStatus.STUB
-        ):
-            self.defined_status = node.status
-
         # Update timestamp
-        self.last_updated_timestamp = max(
-            self.last_updated_timestamp, node.last_updated_timestamp
-        )
+        self.updated_at = max(self.updated_at, node.updated_at)
 
     def with_goal(self, goal_context: str) -> str:
         """Get the research topic from the messages."""
@@ -195,30 +191,51 @@ class ConceptNode(BaseModel):
         return goal_context
 
 
+class RelationshipProfile(BaseModel):
+    """
+    Represents a profile of a relationship between concept nodes in the knowledge graph.
+    """
+
+    rationale: str
+    confidence: float
+    sources: List[EvidenceAtom]
+    classification: Optional[str] = None
+
+    def merge(self, other: "RelationshipProfile") -> None:
+        """
+        Merge this relationship profile into incoming relationship profile.
+        """
+        if other.confidence > self.confidence:
+            self.confidence = other.confidence
+            self.rationale = other.rationale
+            self.sources = other.sources
+            self.classification = other.classification
+
+
 class Relationship(BaseModel):
     """
     Represents a relationship between concept nodes in the knowledge graph.
     """
 
+    # Metadata
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     source_node_id: str
     target_node_id: str
     type: RelationshipType
-    description: Optional[str] = None
+    updated_at: datetime = Field(default_factory=datetime.now)
+    discovery_count: int = 0
 
-    # Discovery metadata
-    research_results: List[ResearchOutput] = Field(default_factory=list)
-    discovery_count_search: int = 0
-    discovery_count_llm_inference: int = 0
-    source_urls: List[str] = Field(default_factory=list)
-    sources: List[EvidenceAtom] = Field(default_factory=list)
+    # The prerequisite profile
+    profile: Optional[RelationshipProfile] = None
 
-    # Confidence scores
-    type_confidence_llm: float = 0.0
-    existence_confidence_llm: float = 0.0
-
-    # Timestamps
-    last_updated_timestamp: datetime = Field(default_factory=datetime.now)
+    @field_validator("profile", mode="before")
+    @classmethod
+    def parse_profile(cls, value: Any) -> Optional[RelationshipProfile]:
+        if value is None or isinstance(value, RelationshipProfile):
+            return value
+        if isinstance(value, str):
+            return RelationshipProfile.model_validate_json(value)
+        return value
 
     def __hash__(self) -> int:
         return self.id.__hash__()
@@ -228,7 +245,11 @@ class Relationship(BaseModel):
         """
         Return the confidence of the relationship.
         """
-        return self.existence_confidence_llm
+        return self.profile.confidence if self.profile else 0.0
+
+    @property
+    def description(self) -> str:
+        return self.profile.rationale if self.profile else ""
 
     def merge_relationship(self, other: "Relationship") -> None:
         """
@@ -248,19 +269,10 @@ class Relationship(BaseModel):
             return
 
         # Sum discovery counts
-        self.discovery_count_search += other.discovery_count_search
-        self.discovery_count_llm_inference += other.discovery_count_llm_inference
+        self.discovery_count += other.discovery_count
 
-        # Append descriptions
-        other_desc = other.description or ""
-        self.description = self.description or "" + f"\n\n{other_desc}"
-
-        # Merge source evidence
-        existing_sources = set(self.sources)
-        new_sources = set(other.sources)
-        self.sources = list(existing_sources.union(new_sources))
-
-        # Merge source URLs (ensure uniqueness)
-        existing_urls = set(self.source_urls)
-        new_urls = set(other.source_urls)
-        self.source_urls = list(existing_urls.union(new_urls))
+        # Merge profiles
+        if self.profile and other.profile:
+            self.profile.merge(other.profile)
+        elif other.profile:
+            self.profile = other.profile

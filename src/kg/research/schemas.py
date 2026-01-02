@@ -156,3 +156,6 @@ class EvidenceAtom(BaseModel):
     supports: str = Field(
         description="Brief description of what this evidence supports or its logical function (e.g., definition / dependency / typical prerequisites / etc.)."
     )
+
+    def __hash__(self) -> int:
+        return hash((self.claim, self.source, self.supports))

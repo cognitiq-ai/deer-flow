@@ -81,8 +81,7 @@ async def identify_goal(
                 name=uqc.goal_string,
                 node_type="goal",
                 name_embedding=goal_embedding,
-                last_updated_timestamp=datetime.now(),
-                defined_status=ConceptNodeStatus.STUB,
+                updated_at=datetime.now(),
             )
 
             # Create the goal node in PKG
@@ -338,7 +337,9 @@ def awg_consolidator(
 
         initial_relationship_state = InferRelationshipsState(
             infer_relationships=[
-                InferRelationshipState(concept_a=concept_a, concept_b=concept_b)
+                InferRelationshipState(
+                    concept_a=concept_a.profile, concept_b=concept_b.profile
+                )
                 for concept_a, concept_b in concept_pairs
             ],
             relationships=[],
@@ -661,9 +662,9 @@ def criteria_check(
             # Prioritize by:
             # 1. Goal node itself (highest priority)
             # 2. Stubs that are direct prerequisites of well-defined nodes
-            # 3. Older stubs (by last_updated_timestamp)
+            # 3. Older stubs
             # 4. Stubs with some existing definition but low confidence
-            def priority_score(node) -> tuple:
+            def priority_score(node: ConceptNode) -> tuple:
                 # Higher scores = higher priority (will be sorted in reverse)
                 # Handle both ConceptNode and ConceptPrerequisite objects
                 if hasattr(node, "id"):  # ConceptNode
@@ -671,11 +672,11 @@ def criteria_check(
                     has_some_definition = 1 if node.definition else 0
                     confidence_score = node.confidence
                     # Use negative timestamp so older nodes get higher priority
-                    age_score = -(node.last_updated_timestamp.timestamp())
+                    age_score = -(node.updated_at.timestamp())
                 else:  # ConceptPrerequisite
                     is_goal = 0  # Prerequisites are never goal nodes
-                    has_some_definition = 1 if getattr(node, "description", "") else 0
-                    confidence_score = getattr(node, "confidence", 0.0)
+                    has_some_definition = 1 if node.profile else 0
+                    confidence_score = node.confidence
                     age_score = 0  # No timestamp for prerequisites
 
                 return (is_goal, has_some_definition, confidence_score, age_score)
@@ -692,15 +693,7 @@ def criteria_check(
                 f"KG2: Selected {len(focus_concepts_output)} concepts for next iteration",
                 {
                     "selected_concepts": [
-                        {
-                            "name": node.name,
-                            "id": getattr(node, "id", "N/A"),
-                            "status": (
-                                getattr(node, "status", "ConceptPrerequisite").value
-                                if hasattr(getattr(node, "status", None), "value")
-                                else str(getattr(node, "status", "ConceptPrerequisite"))
-                            ),
-                        }
+                        {"name": node.name, "id": node.id, "status": node.status.value}
                         for node in focus_concepts_output
                     ]
                 },

@@ -23,7 +23,7 @@ from src.kg.profile.schemas import (
     ProfileResearchAction,
     ResearchUrl,
 )
-from src.kg.state import ConceptProfileState, ConceptResearchState, ResearchActionState
+from src.kg.state import ConceptProfile, ConceptResearchState, ResearchActionState
 from src.kg.utils import format_message, llm_with_retry, to_yaml
 from src.llms.llm import get_llm_by_type
 
@@ -130,7 +130,7 @@ def propose_profile(state: ConceptResearchState, config: RunnableConfig) -> dict
         return {
             "messages": messages,
             "iteration_number": current_iteration,
-            "profile": ConceptProfileState(concept=profile),
+            "profile": ConceptProfile(concept=profile),
         }
     except Exception as e:
         return {
@@ -181,7 +181,7 @@ def evaluate_profile(state: ConceptResearchState, config: RunnableConfig) -> dic
         )
         return {
             "messages": messages,
-            "profile": ConceptProfileState(concept=concept, evaluation=evaluation),
+            "profile": ConceptProfile(concept=concept, evaluation=evaluation),
         }
     except Exception as e:
         return {

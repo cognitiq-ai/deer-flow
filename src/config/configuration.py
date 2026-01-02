@@ -50,7 +50,7 @@ class Configuration:
     max_search_results: int = 5  # Maximum number of search results
     mcp_settings: dict = None  # MCP settings, including dynamic loaded tools
     report_style: str = ReportStyle.ACADEMIC.value  # Report style
-    enable_deep_thinking: bool = False  # Whether to enable deep thinking
+    enable_deep_thinking: bool = True  # Whether to enable deep thinking
 
     # Knowledge Graph
     reflection_confidence = 0.85  # Minimum reflection confidence threshold

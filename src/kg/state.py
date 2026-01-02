@@ -71,7 +71,7 @@ class ConceptResearchState(BaseModel):
     research_mode: str = "profile"  # "profile" or "prerequisites"
 
     # Concept profile research
-    profile: Optional["ConceptProfileState"] = None
+    profile: Optional["ConceptProfile"] = None
 
     # Prerequisite research
     prerequisites: Optional["ConceptPrerequisiteState"] = None
@@ -93,11 +93,11 @@ class ConceptResearchState(BaseModel):
     )
 
     @property
-    def opt_concept(self):
-        """Get the conceptualization from the profile or the concept."""
-        if self.profile:
-            return self.profile.concept.conceptualization or self.concept
-        return self.concept
+    def definition(self):
+        """Get the definition from the profile or the concept."""
+        if self.profile and self.profile.concept.conceptualization:
+            return self.profile.concept.conceptualization.definition
+        return self.concept.definition
 
     @model_validator(mode="after")
     def set_system_message(self) -> "ConceptResearchState":
@@ -167,7 +167,7 @@ class ContentExtractState(BaseModel):
     id: Optional[int] = None
 
 
-class ConceptProfileState(BaseModel):
+class ConceptProfile(BaseModel):
     """State for concept profile reflection."""
 
     concept: ConceptProfileOutput
@@ -326,8 +326,8 @@ class InferRelationshipState(BaseModel):
     """State for relationship inference."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    concept_a: ConceptNode
-    concept_b: ConceptNode
+    concept_a: ConceptProfileOutput
+    concept_b: ConceptProfileOutput
     relationship_types: Optional[List[RelationshipType]] = None
 
 
