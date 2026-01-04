@@ -17,6 +17,7 @@ def _build_context(
     goal_context: ConceptNode,
     ordered_nodes: List[ConceptNode],
     current_node_index: int,
+    personalization_overlay: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Build rich educational context for the concept from the knowledge graph.
@@ -138,6 +139,55 @@ def _build_context(
     )
     context_parts.append("- Uses clear explanations suitable for progressive learning")
 
+    # 6. Personalization Directives (optional per-concept overlay)
+    if personalization_overlay:
+        mode = (personalization_overlay.get("mode") or {}).get("mode")
+        delivery = personalization_overlay.get("delivery") or {}
+        assessment = personalization_overlay.get("assessment") or {}
+        prereq_policy = personalization_overlay.get("prereq_policy") or {}
+
+        context_parts.append("\n## PERSONALIZATION DIRECTIVES")
+        context_parts.append(f"**Mode**: {mode}")
+        if delivery:
+            context_parts.append(
+                f"**Depth**: {delivery.get('depth')} | **Learning style**: {delivery.get('learning_style')}"
+            )
+            if delivery.get("modality_weights"):
+                context_parts.append(
+                    f"**Modality weights**: {delivery.get('modality_weights')}"
+                )
+            if delivery.get("key_emphases"):
+                context_parts.append(
+                    f"**Key emphases**: {delivery.get('key_emphases')}"
+                )
+
+        if mode == "recap":
+            context_parts.append(
+                "- Keep this concise: quick refresh + common pitfalls + minimal examples."
+            )
+        elif mode == "teach_with_diagnostic":
+            diagnostic = assessment.get("diagnostic_prompt")
+            if diagnostic:
+                context_parts.append("### Start with a diagnostic")
+                context_parts.append(diagnostic)
+                context_parts.append(
+                    "- After the diagnostic, teach based on likely gaps; keep it efficient."
+                )
+        elif mode == "skip":
+            context_parts.append(
+                "- This concept should be skipped; if any content is produced, make it ultra-brief and purely connective."
+            )
+
+        if assessment:
+            if assessment.get("exit_checks"):
+                context_parts.append(
+                    f"**Exit checks**: {assessment.get('exit_checks')}"
+                )
+        if prereq_policy:
+            context_parts.append(
+                f"**Prerequisite policy**: {prereq_policy.get('action')} ({prereq_policy.get('reason')})"
+            )
+
     educational_context = "\n".join(context_parts)
 
     return educational_context
@@ -236,6 +286,7 @@ async def content_generator(
     ordered_nodes_data: List[Dict[str, Any]],
     current_node_index: int,
     session_log_data: Dict[str, Any],
+    personalization_overlay: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Educational Content Processor function.
@@ -278,6 +329,7 @@ async def content_generator(
             goal_context,
             ordered_nodes,
             current_node_index,
+            personalization_overlay=personalization_overlay,
         )
 
         # Step 2: Generate educational content using deer-flow

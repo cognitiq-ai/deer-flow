@@ -26,6 +26,7 @@ from .debug_utils import (
 
 # Data models
 from .models import (
+    LearnerPersonalizationRequest,
     SessionLog,
     UserQueryContext,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "session_orchestrator",
     "session_orchestrator_celery_task",
     # Data models
+    "LearnerPersonalizationRequest",
     "SessionLog",
     "UserQueryContext",
     # Debug utilities

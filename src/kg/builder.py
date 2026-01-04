@@ -3,6 +3,16 @@ from typing import List
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RunnableConfig, Send
 
+from src.kg.personalization.nodes import (
+    personalization_assessment,
+    personalization_delivery,
+    personalization_fit,
+    personalization_mode,
+    personalization_preprocess,
+    personalization_prereq_policy,
+    route_after_personalization_prereq_policy,
+    route_after_personalization_router,
+)
 from src.kg.prerequisites.nodes import (
     action_prerequisites,
     evaluate_prerequisites,
@@ -56,6 +66,12 @@ def create_concept_research_graph():
     builder.add_node("get_related_concepts", get_related_concepts)
     builder.add_node("infer_relationship", infer_relationship)
     builder.add_node("merge_related_concepts", merge_related_concepts)
+    builder.add_node("personalization_preprocess", personalization_preprocess)
+    builder.add_node("personalization_fit", personalization_fit)
+    builder.add_node("personalization_mode", personalization_mode)
+    builder.add_node("personalization_delivery", personalization_delivery)
+    builder.add_node("personalization_assessment", personalization_assessment)
+    builder.add_node("personalization_prereq_policy", personalization_prereq_policy)
     builder.add_node("propose_prerequisites", propose_prerequisites)
     builder.add_node("evaluate_prerequisites", evaluate_prerequisites)
     builder.add_node("action_prerequisites", action_prerequisites)
@@ -92,9 +108,20 @@ def create_concept_research_graph():
         ["infer_relationship", "merge_related_concepts"],
     )
     builder.add_edge("infer_relationship", "merge_related_concepts")
-    builder.add_edge(
+    builder.add_conditional_edges(
         "merge_related_concepts",
-        "initial_prerequisite_research",
+        route_after_personalization_router,
+        ["personalization_preprocess", "initial_prerequisite_research"],
+    )
+    builder.add_edge("personalization_preprocess", "personalization_fit")
+    builder.add_edge("personalization_fit", "personalization_mode")
+    builder.add_edge("personalization_mode", "personalization_delivery")
+    builder.add_edge("personalization_delivery", "personalization_assessment")
+    builder.add_edge("personalization_assessment", "personalization_prereq_policy")
+    builder.add_conditional_edges(
+        "personalization_prereq_policy",
+        route_after_personalization_prereq_policy,
+        ["initial_prerequisite_research", "merge_prerequisites"],
     )
     builder.add_conditional_edges(
         "initial_prerequisite_research",

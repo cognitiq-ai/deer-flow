@@ -301,33 +301,26 @@ Analyze <profile_generation> to understand the research concept and its profile:
 {research_concept}
 </research_concept>
 
-These are canonical concepts that have already been evaluated to **qualify** as prerequisites for the <research_concept> and must be considered in the overall coverage assessment.
-<canonical_prerequisites>
+These are canonical concepts that have already been considered as prerequisite candidates for the <research_concept> and must be considered in the overall coverage assessment.
+<canonical_candidates>
 {candidates_str}
-</canonical_prerequisites>
+</canonical_candidates>
 
-These are concepts that have already been evaluated to **not qualify** as prerequisites for the <research_concept> and must be considered in the overall coverage assessment.
-<rejected_candidates>
-{rejects_str}
-</rejected_candidates>
-
-Candidate-level evaluations for all candidates are available in <prerequisite_candidate_evaluations>
+Individual evaluations for all candidates are available in <prerequisite_candidate_evaluations>
 
 ### Instructions
 
 **I. Structural Quality**
-*   **Evidence Scope (Critical):** Treat the `sources` (evidence atoms) and optional `evidence_summary` included in <canonical_prerequisites> / <rejected_candidates> as the only admissible evidence. Do not assume additional external research exists beyond these fields.
-*   Analyze structural organization qualities such as orthogonality, aliasing, hierarchy, level uniformity, etc. of the <canonical_prerequisites>.
+*   **Evidence Scope (Critical):** Treat the `sources` (evidence atoms) and optional `evidence_summary` included in <canonical_candidates> as the only admissible evidence. Do not assume additional external research exists beyond these fields.
+*   Analyze structural organization qualities such as orthogonality, aliasing, hierarchy, level uniformity, etc. of the <canonical_candidates>.
 *   Group obvious aliases or near-duplicates into alias groups.
-*   Judge the distinctness and granularity of the <canonical_prerequisites> to assign an orthogonality score.
-*   Include the <rejected_candidates> in your analysis to formulate a balanced structural assessment.
+*   Judge the distinctness and granularity of the <canonical_candidates> to assign an orthogonality score.
 
 **II. Coverage Assessment**
-*   **Recall Proxy:** Judge how completely the direct prerequisite space of the <research_concept> is covered by the <canonical_prerequisites> and the <rejected_candidates>. 
+*   **Recall Proxy:** Judge how completely the direct prerequisite space of the <research_concept> is covered by the <canonical_candidates>. 
     *   **Constraint:** Your `coverage_score` must strictly reflect the recall of the current set; do not include hypothetical or not-yet-discovered concepts in this score.
 *   **Gap Analysis:** Consider the five prerequisite types (Definitional, Structural, Taxonomic, Procedural, Other) as described in <prerequisite_types> when thinking about missing blocks.
 *   **Exploration Strategy:** Propose impactful exploratory areas to address identified coverage gaps. Aim for diverse perspectives and clever discovery strategies to improve the set's recall in future iterations.
-*   **Rejection Signal:** Do not insist on refining/including the <rejected_candidates> in further exploration areas — instead treat rejection as an indication to look elsewhere.
 
 ### Output Protocol
 *   **Format:** Return **JSON only**. No prose or markdown.
@@ -382,17 +375,12 @@ Analyze <profile_generation> to understand the research concept and its profile:
 {research_concept}
 </research_concept>
 
-The following candidates are already undergoing refinement and not to be considered for expansion research:
-<refined_candidates>
-{refined_candidates_str}
-</refined_candidates>
-
-Focus on global signals for coverage and structural issues in <prerequisite_global_evaluation> and exclude the <refined_candidates>.
+Focus on global signals for coverage and structural issues in <prerequisite_global_evaluation> to formulate the expansion research strategy.
 
 ### Instructions
 
 **I. Query Formulation Strategy**
-*   **Target:** Address improved coverage in exploratory areas expressed in <prerequisite_global_evaluation> strictly excluding the <refined_candidates>.
+*   **Target:** Address improved coverage in exploratory areas expressed in <prerequisite_global_evaluation>.
 *   **Generate:** Up to `{n_queries}` search queries and `{n_urls}` URLs focused on the <prerequisite_types> as a guide:
     *   **Definitional:** Terms and concepts required to understand the formal definition of <research_concept>. 
     *   **Structural:** Essential physical or mechanical component parts of the target concept.

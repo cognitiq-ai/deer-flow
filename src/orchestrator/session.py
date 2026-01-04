@@ -52,6 +52,8 @@ async def session_orchestrator(
 
     # Get the configuration
     config = Configuration()
+    # Session-scoped personalization overlays (not persisted to ConceptNode / PKG)
+    overlays_by_concept_id: Dict[str, Dict[str, Any]] = {}
 
     try:
         # Reconstruct UserQueryContext
@@ -150,6 +152,9 @@ async def session_orchestrator(
                             "goal_context_data": gn_user_session.model_dump(),
                             "awg_context_data": awg_session.model_dump(),
                             "session_log_data": {"logs": session_log_global.logs},
+                            "personalization_request_data": uqc.personalization.model_dump()
+                            if getattr(uqc, "personalization", None)
+                            else None,
                         }
 
                         # Submit KG3 inner loop processor (try Celery, fallback to direct call)
@@ -161,6 +166,9 @@ async def session_orchestrator(
                                 awg_context_data=task_data["awg_context_data"],
                                 session_log_data=task_data["session_log_data"],
                                 config_data=config.__dict__,
+                                personalization_request_data=task_data[
+                                    "personalization_request_data"
+                                ],
                             )
                         except AttributeError:
                             # Fallback to direct function call if Celery not available
@@ -179,6 +187,9 @@ async def session_orchestrator(
                                 awg_context_data=task_data["awg_context_data"],
                                 session_log_data=task_data["session_log_data"],
                                 config_data=config.__dict__,
+                                personalization_request_data=task_data[
+                                    "personalization_request_data"
+                                ],
                             )
                             task = DirectTaskResult(result)
                         batch_tasks.append((task, concept.name))
@@ -241,6 +252,13 @@ async def session_orchestrator(
                     for result, status in current_iteration_inner_loop_results
                     if status
                 ]
+                # Merge any per-concept personalization overlays returned by inner loops
+                for extracted in inner_loop_results:
+                    concept_id = (extracted.get("concept_defined") or {}).get("id")
+                    overlay = extracted.get("personalization_overlay")
+                    if concept_id and overlay:
+                        overlays_by_concept_id[concept_id] = overlay
+
                 updated_awg_session, consolidation_status = awg_consolidator(
                     inner_loop_results,
                     pkg_interface,
@@ -332,12 +350,22 @@ async def session_orchestrator(
         # Educational Content Generation Phase
         educational_content_results = []
         if order_nodes and ordered_nodes and config.enable_content:
+            # Filter out concepts whose personalization overlay indicates mode=skip
+            filtered_ordered_nodes = []
+            for node_id in ordered_nodes:
+                overlay = overlays_by_concept_id.get(node_id)
+                mode = (overlay or {}).get("mode", {}).get("mode")
+                if mode == "skip":
+                    continue
+                filtered_ordered_nodes.append(node_id)
+
             session_log_global.log(
                 "INFO",
-                f"KG1: Starting educational content generation for {len(ordered_nodes)} concepts",
+                f"KG1: Starting educational content generation for {len(filtered_ordered_nodes)} concepts",
                 {
                     "ordered_concepts": [
-                        awg_session.get_node(node_id).name for node_id in ordered_nodes
+                        awg_session.get_node(node_id).name
+                        for node_id in filtered_ordered_nodes
                     ]
                 },  # Log first 5
             )
@@ -348,10 +376,12 @@ async def session_orchestrator(
 
             try:
                 # Process concepts in batches for educational content generation
-                max_parallel = min(config.max_parallel_inner_loops, len(ordered_nodes))
+                max_parallel = min(
+                    config.max_parallel_inner_loops, len(filtered_ordered_nodes)
+                )
 
-                for i in range(0, len(ordered_nodes), max_parallel):
-                    batch_node_ids = ordered_nodes[i : i + max_parallel]
+                for i in range(0, len(filtered_ordered_nodes), max_parallel):
+                    batch_node_ids = filtered_ordered_nodes[i : i + max_parallel]
 
                     session_log_global.log(
                         "INFO",
@@ -376,10 +406,13 @@ async def session_orchestrator(
                             "goal_context_data": gn_user_session.model_dump(),
                             "ordered_nodes_data": [
                                 awg_session.get_node(nid).model_dump()
-                                for nid in ordered_nodes
+                                for nid in filtered_ordered_nodes
                             ],
                             "current_node_index": current_node_index,
                             "session_log_data": {"logs": session_log_global.logs},
+                            "personalization_overlay": overlays_by_concept_id.get(
+                                concept_node.id
+                            ),
                         }
 
                         # Submit educational content processor (try Celery, fallback to direct call)
@@ -392,6 +425,9 @@ async def session_orchestrator(
                                 ordered_nodes_data=task_data["ordered_nodes_data"],
                                 current_node_index=task_data["current_node_index"],
                                 session_log_data=task_data["session_log_data"],
+                                personalization_overlay=task_data[
+                                    "personalization_overlay"
+                                ],
                             )
                         except AttributeError:
                             # Fallback to direct function call if Celery not available
@@ -411,6 +447,9 @@ async def session_orchestrator(
                                 ordered_nodes_data=task_data["ordered_nodes_data"],
                                 current_node_index=task_data["current_node_index"],
                                 session_log_data=task_data["session_log_data"],
+                                personalization_overlay=task_data[
+                                    "personalization_overlay"
+                                ],
                             )
                             task = DirectTaskResult(result)
                         batch_tasks.append(task)

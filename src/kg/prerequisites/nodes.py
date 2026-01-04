@@ -3,7 +3,7 @@
 import uuid
 from copy import deepcopy
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from bs4 import Tag
 from langchain_core.messages import AIMessage, HumanMessage
@@ -55,6 +55,102 @@ from src.kg.utils import format_message, llm_with_retry, to_yaml
 from src.llms.llm import get_llm_by_type
 
 
+def _norm(s: str) -> str:
+    return (s or "").strip().lower()
+
+
+def _tokens(s: str) -> set[str]:
+    return {t for t in _norm(s).replace("/", " ").replace("_", " ").split() if t}
+
+
+def _get_prereq_policy(state: ConceptResearchState):
+    overlay = getattr(state, "personalization_overlay", None)
+    return getattr(overlay, "prereq_policy", None)
+
+
+def _get_scope_controls(state: ConceptResearchState) -> tuple[list[str], list[str]]:
+    req = getattr(state, "personalization_request", None)
+    goal = getattr(req, "goal", None)
+    inclusions = list(getattr(goal, "scope_inclusions", []) or [])
+    exclusions = list(getattr(goal, "scope_exclusions", []) or [])
+    return inclusions, exclusions
+
+
+def _matches_scope_term(name: str, scope_terms: list[str]) -> Optional[str]:
+    """
+    Conservative scope match:
+    - exact normalized match OR
+    - keyword match against name tokens.
+    """
+    n = _norm(name)
+    toks = _tokens(name)
+    for term in scope_terms or []:
+        t = _norm(term)
+        if not t:
+            continue
+        if t == n or t in toks:
+            return term
+    return None
+
+
+def _apply_prereq_personalization_policy(
+    state: ConceptResearchState, prerequisite_state: ConceptPrerequisiteState
+) -> ConceptPrerequisiteState:
+    """
+    Apply per-concept prerequisite policy:
+    - filter by scope exclusions if enabled
+    - prefer inclusions in ordering when limiting
+    - cap discovered canonical candidates when action == limit
+    """
+    policy = _get_prereq_policy(state)
+    if policy is None:
+        return prerequisite_state
+
+    inclusions, exclusions = _get_scope_controls(state)
+    respect_excl = bool(getattr(policy, "respect_scope_exclusions", False))
+    prefer_incl = bool(getattr(policy, "prefer_scope_inclusions", False))
+
+    # Filter canonical candidates by exclusions (applies to both existing and discovered).
+    if respect_excl and exclusions and prerequisite_state.canonical:
+        filtered = {}
+        for key, profile in prerequisite_state.canonical.items():
+            concept_name = getattr(getattr(profile, "concept", None), "name", "")
+            if _matches_scope_term(concept_name, exclusions):
+                continue
+            filtered[key] = profile
+        prerequisite_state.canonical = filtered
+
+    # Enforce max_new_prereqs when limiting (only for discovered canonical prerequisites).
+    if getattr(policy, "action", None) == "limit":
+        max_new = int(getattr(policy, "max_new_prereqs", 0) or 0)
+        if max_new <= 0 or not prerequisite_state.canonical:
+            return prerequisite_state
+
+        discovered_items = []
+        keep = {}
+        for key, profile in prerequisite_state.canonical.items():
+            concept = getattr(profile, "concept", None)
+            source = getattr(concept, "source", None)
+            if source == "discovered":
+                name = getattr(concept, "name", "")
+                conf = float(getattr(concept, "confidence", 0.0) or 0.0)
+                in_inclusion = bool(
+                    prefer_incl and _matches_scope_term(name, inclusions)
+                )
+                discovered_items.append((in_inclusion, conf, key, profile))
+            else:
+                keep[key] = profile
+
+        # Prefer inclusions first (True before False), then confidence.
+        discovered_items.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        for _, _, key, profile in discovered_items[:max_new]:
+            keep[key] = profile
+
+        prerequisite_state.canonical = keep
+
+    return prerequisite_state
+
+
 def initial_prerequisite_research(
     state: ConceptResearchState, config: RunnableConfig
 ) -> dict:
@@ -66,6 +162,10 @@ def initial_prerequisite_research(
     """
     # Get the config
     configurable = Configuration.from_runnable_config(config)
+    policy = _get_prereq_policy(state)
+    max_queries = configurable.max_search_queries
+    if policy is not None and getattr(policy, "max_search_queries", None) is not None:
+        max_queries = min(max_queries, int(policy.max_search_queries))
 
     # Initialize LLM
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
@@ -73,7 +173,7 @@ def initial_prerequisite_research(
 
     formatted_prompt = initial_prerequisite_research_plan_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
-        top_queries=configurable.max_search_queries,
+        top_queries=max_queries,
     )
     # Curate minimal context: reuse the established concept profile if available.
     curated_context = curate_messages(
@@ -89,7 +189,7 @@ def initial_prerequisite_research(
 
     try:
         action = llm_with_retry(llm, PrerequisiteResearchAction, llm_messages)
-        action.queries = action.queries[: configurable.max_search_queries]
+        action.queries = action.queries[:max_queries]
 
         messages = make_message_entry(
             "action_prerequisites",
@@ -143,7 +243,7 @@ def _get_existing_prerequisites(
             for prereq in state.awg_context.get_target_neighbors(
                 state.concept.id, RelationshipType.HAS_PREREQUISITE
             )
-            if prereq.infer_status() != ConceptNodeStatus.STUB
+            if prereq.status != ConceptNodeStatus.STUB
         }
     )
 
@@ -510,6 +610,9 @@ def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -
         message_store,
     )
 
+    # 5. Apply per-concept personalization caps/filters if present.
+    prerequisite_state = _apply_prereq_personalization_policy(state, prerequisite_state)
+
     result = {
         "messages": message_store,
         "prerequisites": prerequisite_state,
@@ -598,13 +701,17 @@ def _evaluate_prerequisite_global(
 ) -> tuple[ConceptPrerequisiteState, MessageStore]:
     """Helper: global coverage/novelty/evidence signals for the prerequisite set."""
 
-    if not prerequisite_state.canonical:
+    if (
+        prerequisite_state.coverage_score >= configurable.reflection_confidence
+        or not prerequisite_state.canonical
+    ):
         return prerequisite_state, message_store
 
     prerequisite_coverage_prompt = prerequisite_coverage_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
-        candidates_str=to_yaml([cand.profile for cand in prerequisite_state.accepted]),
-        rejects_str=to_yaml([cand.profile for cand in prerequisite_state.rejected]),
+        candidates_str=to_yaml(
+            [cand.profile for cand in prerequisite_state.canonical.values()]
+        ),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -734,13 +841,21 @@ def _action_prerequisite_refinement(
     if not prerequisite_state.pending:
         return prerequisite_state, message_store
 
+    policy = _get_prereq_policy(state)
+    max_queries = configurable.max_search_queries
+    max_urls = configurable.max_extract_urls
+    if policy is not None and getattr(policy, "max_search_queries", None) is not None:
+        max_queries = min(max_queries, int(policy.max_search_queries))
+    if policy is not None and getattr(policy, "max_extract_urls", None) is not None:
+        max_urls = min(max_urls, int(policy.max_extract_urls))
+
     prerequisite_refinement_prompt = prerequisite_refinement_action_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
         candidate_evaluations_str=to_yaml(
             [cand.profile for cand in prerequisite_state.pending]
         ),
-        n_queries=configurable.max_search_queries,
-        n_urls=configurable.max_extract_urls,
+        n_queries=max_queries,
+        n_urls=max_urls,
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -759,6 +874,8 @@ def _action_prerequisite_refinement(
         plan: PrerequisiteRefinementAction = llm_with_retry(
             llm, PrerequisiteRefinementAction, llm_messages
         )
+        plan.action.queries = (plan.action.queries or [])[:max_queries]
+        plan.action.urls = (plan.action.urls or [])[:max_urls]
         message_store = merge_message_histories(
             message_store,
             make_message_entry(
@@ -800,13 +917,24 @@ def _action_prerequisite_expansion(
 ) -> tuple[ConceptPrerequisiteState, MessageStore]:
     """Helper: generate research action plan for prerequisite expansion."""
 
+    if (
+        prerequisite_state.coverage_score >= configurable.reflection_confidence
+        or not prerequisite_state.global_signals
+    ):
+        return prerequisite_state, message_store
+
+    policy = _get_prereq_policy(state)
+    max_queries = configurable.max_search_queries
+    max_urls = configurable.max_extract_urls
+    if policy is not None and getattr(policy, "max_search_queries", None) is not None:
+        max_queries = min(max_queries, int(policy.max_search_queries))
+    if policy is not None and getattr(policy, "max_extract_urls", None) is not None:
+        max_urls = min(max_urls, int(policy.max_extract_urls))
+
     prerequisite_expansion_prompt = prerequisite_expansion_action_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
-        refined_candidates_str=to_yaml(
-            [cand.profile for cand in prerequisite_state.pending]
-        ),
-        n_queries=configurable.max_search_queries,
-        n_urls=configurable.max_extract_urls,
+        n_queries=max_queries,
+        n_urls=max_urls,
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -825,6 +953,8 @@ def _action_prerequisite_expansion(
         plan: PrerequisiteExpansionAction = llm_with_retry(
             llm, PrerequisiteExpansionAction, llm_messages
         )
+        plan.action.queries = (plan.action.queries or [])[:max_queries]
+        plan.action.urls = (plan.action.urls or [])[:max_urls]
         message_store = merge_message_histories(
             message_store,
             make_message_entry(
@@ -927,17 +1057,20 @@ def prerequisites_completed(state: ConceptResearchState, config: RunnableConfig)
     LangGraph condition function that checks if prerequisite research is complete.
     """
     configurable = Configuration.from_runnable_config(config)
-    depth_exceeded = state.iteration_number >= configurable.max_iteration_main
-    score = getattr(
-        getattr(
-            getattr(state.prerequisites, "global_signals", None), "coverage_eval", None
-        ),
-        "coverage_score",
-        0.0,
-    )
-    is_complete = score >= configurable.reflection_confidence
+    prerequisite_state = state.prerequisites or ConceptPrerequisiteState()
 
-    if depth_exceeded or is_complete:
+    # 1. Max iterations exceeded
+    depth_exceeded = state.iteration_number >= configurable.max_iteration_main
+
+    # 2. Sufficient prerequisite coverage
+    sufficient_coverage = (
+        prerequisite_state.coverage_score >= configurable.reflection_confidence
+    )
+
+    # 3. No pending candidates
+    no_pending_candidates = not prerequisite_state.pending
+
+    if depth_exceeded or (sufficient_coverage and no_pending_candidates):
         return "merge_prerequisites"
 
     return "action_prerequisites"

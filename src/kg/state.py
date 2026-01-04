@@ -22,6 +22,7 @@ from src.kg.message_store import (
     make_message_entry,
     merge_message_histories,
 )
+from src.kg.personalization.schemas import ConceptPersonalizationOverlay
 from src.kg.prerequisites.schemas import (
     ConceptPrerequisite,
     DiscoveryCandidate,
@@ -46,6 +47,7 @@ from src.kg.research.models import (
 )
 from src.kg.research.schemas import SearchQuery
 from src.kg.utils import get_current_date, to_yaml
+from src.orchestrator.models import LearnerPersonalizationRequest
 from src.prompts.kg.prompts import system_message_research
 
 
@@ -69,6 +71,11 @@ class ConceptResearchState(BaseModel):
     # Control flow
     iteration_number: int = 0
     research_mode: str = "profile"  # "profile" or "prerequisites"
+
+    # Personalization (session/goal/learner scoped; not persisted to ConceptNode)
+    personalization_request: Optional[LearnerPersonalizationRequest] = None
+    personalization_overlay: Optional[ConceptPersonalizationOverlay] = None
+    personalization_warnings: List[str] = Field(default_factory=list)
 
     # Concept profile research
     profile: Optional["ConceptProfile"] = None

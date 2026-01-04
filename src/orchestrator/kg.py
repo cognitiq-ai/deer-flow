@@ -20,7 +20,11 @@ from src.kg.state import (
     InferRelationshipState,
 )
 from src.llms.llm import generate_embedding
-from src.orchestrator.models import SessionLog, UserQueryContext
+from src.orchestrator.models import (
+    LearnerPersonalizationRequest,
+    SessionLog,
+    UserQueryContext,
+)
 
 DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "auto")
 
@@ -115,6 +119,7 @@ async def inner_loop(
     awg_context_data: Dict[str, Any],
     session_log_data: Dict[str, Any],
     config_data: Dict[str, Any],
+    personalization_request_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     KG3: Inner_Loop_Concept_Processor Celery task.
@@ -146,6 +151,11 @@ async def inner_loop(
     try:
         # Prepare context for the agent
         goal_context_str = goal_context.name
+        personalization_request = (
+            LearnerPersonalizationRequest(**personalization_request_data)
+            if personalization_request_data
+            else None
+        )
 
         # Step 1: Definition Research
         session_log.log(
@@ -164,6 +174,7 @@ async def inner_loop(
             goal_context=goal_context_str,
             awg_context=awg_context,
             research_mode="profile",
+            personalization_request=personalization_request,
         )
 
         session_log.log("INFO", f"Starting research process for {c_focus.name}")
@@ -187,6 +198,14 @@ async def inner_loop(
             "awg_context": output_state.awg_context.model_dump(),
             "concept_profile": output_state.profile.model_dump(),
             "research_mode": output_state.research_mode,
+            "personalization_overlay": output_state.personalization_overlay.model_dump(
+                exclude_none=True
+            )
+            if getattr(output_state, "personalization_overlay", None)
+            else None,
+            "personalization_warnings": getattr(
+                output_state, "personalization_warnings", []
+            ),
         }
 
         session_log.log(
