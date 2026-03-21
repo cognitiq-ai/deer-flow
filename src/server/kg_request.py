@@ -3,18 +3,29 @@
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.orchestrator.models import LearnerPersonalizationRequest
 
 
 class KGSessionRequest(BaseModel):
-    goal_string: str = Field(
-        ...,
-        description="The user's goal string for the KG session.",
+    goal_string: Optional[str] = Field(
+        default=None,
+        description="Initial user message/goal used to start bootstrap.",
         json_schema_extra={
             "examples": ["Learn web scraping in Python to collect product prices"]
         },
+    )
+    thread_id: str = Field(
+        default="__kg_default__",
+        description="Session thread id used for bootstrap interrupt resume.",
+    )
+    interrupt_feedback: Optional[str] = Field(
+        default=None,
+        description=(
+            "If provided, resumes a previously interrupted bootstrap session with this "
+            "user response."
+        ),
     )
     raw_topic_string: Optional[str] = Field(
         None,
@@ -36,3 +47,15 @@ class KGSessionRequest(BaseModel):
             "can adapt sequencing/content at runtime without mutating canonical nodes."
         ),
     )
+    enable_deep_thinking: Optional[bool] = Field(
+        default=False,
+        description="Whether to use reasoning model for bootstrap/KG calls.",
+    )
+
+    @model_validator(mode="after")
+    def validate_start_or_resume(self) -> "KGSessionRequest":
+        if not self.interrupt_feedback and not self.goal_string:
+            raise ValueError(
+                "goal_string is required when interrupt_feedback is not provided."
+            )
+        return self

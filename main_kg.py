@@ -1,39 +1,25 @@
 #!/usr/bin/env python3
-"""
-Knowledge Graph Agent Demo
+"""Interactive local CLI for bootstrap-first KG sessions."""
 
-This script provides an entry point for the Knowledge Graph agent, allowing users
-to create and explore knowledge graphs through both interactive and command-line modes.
-
-Features:
-- Interactive mode with built-in learning questions
-- Command-line mode for direct queries
-- Configurable user context (goal, topic, knowledge level, preferences)
-- Debug modes with rich console output and visualizations
-- Production mode for optimized performance
-"""
+from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
-from InquirerPy import inquirer
 
 # Add the parent directory to the Python path to enable src imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
 
-from src.config.kg_questions import (
-    BUILT_IN_KG_QUESTIONS,
-    KNOWLEDGE_LEVELS,
-)
 from src.orchestrator.debug_utils import create_debug_session_logger
-from src.orchestrator.models import UserQueryContext
 from src.orchestrator.session import session_orchestrator
 
 # Load environment variables
@@ -41,312 +27,188 @@ load_dotenv()
 os.environ.setdefault("AGENT_RECURSION_LIMIT", "100")
 
 
-def ask_kg(
-    goal_string: str,
-    raw_topic_string: Optional[str] = None,
-    prior_knowledge_level: str = "beginner",
-    preferences: Optional[Dict[str, Any]] = None,
-    debug_mode: str = "basic",
-    enable_rich_output: bool = False,
-    show_interactive: bool = False,
-):
-    """Run the knowledge graph agent with the given parameters.
+def _print_json(data: Dict[str, Any]) -> None:
+    print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
-    Args:
-        goal_string: The user's learning goal
-        raw_topic_string: Optional raw topic string
-        prior_knowledge_level: Prior knowledge level (beginner, intermediate, advanced)
-        preferences: Optional user preferences dictionary
-        debug_mode: Debug mode ('basic', 'rich', 'interactive')
-        enable_rich_output: Enable rich console output
-        show_interactive: Show interactive visualizations
-    """
-    asyncio.run(
-        run_kg_agent_async(
-            goal_string=goal_string,
-            raw_topic_string=raw_topic_string,
-            prior_knowledge_level=prior_knowledge_level,
-            preferences=preferences,
-            debug_mode=debug_mode,
-            enable_rich_output=enable_rich_output,
-            show_interactive=show_interactive,
+
+def _check_infrastructure() -> tuple[list[str], list[str]]:
+    """Check required local infrastructure configuration."""
+    errors = []
+    warnings = []
+
+    neo4j_vars = ["NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD"]
+    missing_neo4j = [var for var in neo4j_vars if not os.getenv(var)]
+    if missing_neo4j:
+        errors.append(
+            f"Neo4j configuration incomplete. Missing: {', '.join(missing_neo4j)}"
         )
-    )
+
+    if not os.getenv("LANGGRAPH_CHECKPOINT_DB_URL"):
+        errors.append(
+            "PostgreSQL checkpointer config missing. Set LANGGRAPH_CHECKPOINT_DB_URL."
+        )
+
+    conf_file = Path("conf.yaml")
+    if not conf_file.exists():
+        errors.append("conf.yaml not found. Copy from conf.yaml.example and configure.")
+    else:
+        try:
+            with conf_file.open(encoding="utf-8") as handle:
+                config = yaml.safe_load(handle)
+            if "BASIC_MODEL" not in config and "REASONING_MODEL" not in config:
+                errors.append("conf.yaml missing BASIC_MODEL or REASONING_MODEL.")
+        except Exception as exc:
+            errors.append(f"conf.yaml is invalid: {exc}")
+
+    if os.getenv("EMBEDDING_PROVIDER", "openai") == "openai" and not os.getenv(
+        "OPENAI_API_KEY"
+    ):
+        warnings.append("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set.")
+
+    if os.getenv("SEARCH_API", "tavily") == "tavily" and not os.getenv(
+        "TAVILY_API_KEY"
+    ):
+        warnings.append("SEARCH_API=tavily but TAVILY_API_KEY not set.")
+
+    if not os.getenv("CELERY_BROKER_URL"):
+        warnings.append("CELERY_BROKER_URL not set. Direct-call fallbacks may be used.")
+
+    return errors, warnings
 
 
-async def run_kg_agent_async(
+async def run_interactive_kg_session(
     goal_string: str,
-    raw_topic_string: Optional[str] = None,
-    prior_knowledge_level: str = "beginner",
-    preferences: Optional[Dict[str, Any]] = None,
+    thread_id: str,
+    enable_deep_thinking: bool = False,
     debug_mode: str = "basic",
     enable_rich_output: bool = False,
     show_interactive: bool = False,
 ) -> Dict[str, Any]:
-    """Run the knowledge graph agent asynchronously."""
-    # Create user query context
-    uqc = UserQueryContext(
-        goal_string=goal_string,
-        raw_topic_string=raw_topic_string,
-        prior_knowledge_level=prior_knowledge_level,
-        preferences=preferences or {},
-    )
-    uqc_data = uqc.model_dump()
-
-    # Configure debug mode
+    """Run KG session with interrupt/resume loop over JSON-style requests."""
     session_logger = None
-    if debug_mode in ["rich", "interactive"]:
+    if debug_mode in {"rich", "interactive"}:
         try:
             session_logger = create_debug_session_logger(
                 enable_rich_output=enable_rich_output,
                 show_interactive=show_interactive,
             )
         except ImportError:
-            print("Warning: Rich library not available. Falling back to basic logging.")
+            print(
+                "Warning: Rich output requested but rich is unavailable. Falling back."
+            )
 
-    # Run the session orchestrator
-    result = await session_orchestrator(uqc_data, session_logger)
+    request: Dict[str, Any] = {
+        "goal_string": goal_string,
+        "thread_id": thread_id,
+        "enable_deep_thinking": enable_deep_thinking,
+    }
 
-    return result
+    while True:
+        result = await session_orchestrator(request, session_logger)
+        if result.get("status") != "INTERRUPTED":
+            return result
+
+        interrupt = result.get("interrupt") or {}
+        interrupt_id = interrupt.get("id") or thread_id
+        content = interrupt.get("content") or "Bootstrap needs clarification."
+        print("\n=== Bootstrap Clarification Required ===")
+        print(f"interrupt_id: {interrupt_id}")
+        print(content)
+        user_reply = input("\nYour response: ").strip()
+        while not user_reply:
+            user_reply = input("Please provide a non-empty response: ").strip()
+
+        request = {
+            "thread_id": thread_id,
+            "interrupt_feedback": user_reply,
+            "enable_deep_thinking": enable_deep_thinking,
+        }
 
 
-def main(
-    debug_mode: str = "basic",
-    enable_rich_output: bool = False,
-    show_interactive: bool = False,
-):
-    """Interactive mode with built-in KG questions.
+def _resolve_goal(args: argparse.Namespace) -> str:
+    if args.goal:
+        return " ".join(args.goal).strip()
+    if args.interactive:
+        goal = input("Enter your learning goal: ").strip()
+        while not goal:
+            goal = input(
+                "Learning goal cannot be empty. Enter your learning goal: "
+            ).strip()
+        return goal
+    raise ValueError("Goal is required unless --interactive is used.")
 
-    Args:
-        debug_mode: Debug mode ('basic', 'rich', 'interactive')
-        enable_rich_output: Enable rich console output
-        show_interactive: Show interactive visualizations
-    """
 
-    # Choose questions and knowledge levels based on language
-    questions = BUILT_IN_KG_QUESTIONS
-    knowledge_levels = KNOWLEDGE_LEVELS
-    ask_own_option = "[Ask my own question]"
-
-    # Select a goal/question
-    initial_goal = inquirer.select(
-        message="What do you want to learn?",
-        choices=[ask_own_option] + questions,
-    ).execute()
-
-    if initial_goal == ask_own_option:
-        initial_goal = inquirer.text(
-            message="What is your learning goal?",
-        ).execute()
-
-    # Get optional topic string
-    raw_topic = inquirer.text(
-        message="Enter a specific topic (optional):",
-        default="",
-    ).execute()
-
-    # Select knowledge level
-    knowledge_level = inquirer.select(
-        message="What is your current knowledge level?",
-        choices=knowledge_levels,
-    ).execute()
-
-    # Get preferences
-    preferences = {}
-
-    # Ask if user wants to set preferences
-    set_preferences = inquirer.confirm(
-        message="Do you want to set any preferences?",
-        default=False,
-    ).execute()
-
-    if set_preferences:
-        # Ask for specific preferences
-        focus_areas = inquirer.text(
-            message="Any specific focus areas? (e.g., 'practical examples, hands-on coding')",
-            default="",
-        ).execute()
-
-        if focus_areas:
-            preferences["focus_areas"] = focus_areas
-
-        learning_style = inquirer.select(
-            message="Preferred learning style:",
-            choices=["visual", "hands-on", "theoretical", "mixed"],
-            default="mixed",
-        ).execute()
-
-        preferences["learning_style"] = learning_style
-
-    # Run the KG agent
-    ask_kg(
-        goal_string=initial_goal,
-        raw_topic_string=raw_topic if raw_topic else None,
-        prior_knowledge_level=knowledge_level,
-        preferences=preferences,
-        debug_mode=debug_mode,
-        enable_rich_output=enable_rich_output,
-        show_interactive=show_interactive,
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Run bootstrap-first KG session locally (interactive CLI)."
     )
-
-
-if __name__ == "__main__":
-    # Set up argument parser
-    parser = argparse.ArgumentParser(description="Run the Knowledge Graph Agent")
-    parser.add_argument("goal", nargs="*", help="The learning goal to process")
+    parser.add_argument("goal", nargs="*", help="Initial learning goal text.")
     parser.add_argument(
         "--interactive",
         action="store_true",
-        help="Run in interactive mode with built-in questions",
+        help="Prompt for goal and then run interactive HITL bootstrap loop.",
     )
     parser.add_argument(
-        "--topic",
+        "--thread-id",
         type=str,
-        help="Specific topic string (optional)",
+        default="",
+        help="Optional explicit thread id (defaults to generated uuid).",
     )
     parser.add_argument(
-        "--knowledge-level",
-        type=str,
-        choices=["beginner", "intermediate", "advanced"],
-        default="beginner",
-        help="Prior knowledge level (default: beginner)",
+        "--enable-deep-thinking",
+        action="store_true",
+        help="Enable reasoning model path for bootstrap/KG.",
     )
     parser.add_argument(
         "--debug-mode",
         type=str,
         choices=["basic", "rich", "interactive"],
         default="basic",
-        help="Debug mode (default: basic)",
+        help="Debug logger mode for local runs.",
     )
     parser.add_argument(
         "--enable-rich-output",
         action="store_true",
-        help="Enable rich console output (requires 'rich' library)",
+        help="Enable rich console output (requires rich library).",
     )
     parser.add_argument(
         "--show-interactive",
         action="store_true",
-        help="Show interactive visualizations",
+        help="Enable interactive graph visualizations in debug mode.",
     )
-    parser.add_argument(
-        "--focus-areas",
-        type=str,
-        help="Specific focus areas for learning",
-    )
-    parser.add_argument(
-        "--learning-style",
-        type=str,
-        choices=["visual", "hands-on", "theoretical", "mixed"],
-        help="Preferred learning style",
-    )
-
     args = parser.parse_args()
 
-    # Check infrastructure requirements
-    def check_infrastructure():
-        """Check if all required infrastructure components are configured."""
-        errors = []
-        warnings = []
-
-        # 1. Check Neo4j configuration (required)
-        neo4j_vars = ["NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD"]
-        missing_neo4j = [var for var in neo4j_vars if not os.getenv(var)]
-        if missing_neo4j:
-            errors.append(
-                f"Neo4j configuration incomplete. Missing: {', '.join(missing_neo4j)}"
-            )
-
-        # 2. Check PostgreSQL configuration (required)
-        if not os.getenv("LANGGRAPH_CHECKPOINT_DB_URL"):
-            errors.append(
-                "PostgreSQL configuration missing. Set LANGGRAPH_CHECKPOINT_DB_URL"
-            )
-
-        # 3. Check conf.yaml exists (required)
-        conf_file = Path("conf.yaml")
-        if not conf_file.exists():
-            errors.append(
-                "conf.yaml file not found. Copy from conf.yaml.example and configure."
-            )
-        else:
-            # Check if conf.yaml has BASIC_MODEL
-            try:
-                with open(conf_file) as f:
-                    config = yaml.safe_load(f)
-                if "BASIC_MODEL" not in config and "REASONING_MODEL" not in config:
-                    errors.append("conf.yaml missing model configuration")
-            except Exception as e:
-                errors.append(f"conf.yaml is invalid: {e}")
-
-        # 4. Check embedding provider (has default but warn if not OpenAI)
-        embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openai")
-        if embedding_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
-            warnings.append("EMBEDDING_PROVIDER=openai but OPENAI_API_KEY not set")
-
-        # 5. Check search API configuration (has defaults but warn about API keys)
-        search_api = os.getenv("SEARCH_API", "tavily")
-        if search_api == "tavily" and not os.getenv("TAVILY_API_KEY"):
-            warnings.append("Using Tavily search but TAVILY_API_KEY not set")
-
-        # 6. Warn about Celery broker (critical for functionality)
-        if not os.getenv("CELERY_BROKER_URL"):
-            warnings.append(
-                "CELERY_BROKER_URL not set. Celery workers required for parallel processing!"
-            )
-
-        return errors, warnings
-
-    errors, warnings = check_infrastructure()
-
+    errors, warnings = _check_infrastructure()
     if errors:
-        print("❌ CRITICAL INFRASTRUCTURE ISSUES:")
-        for error in errors:
-            print(f"  • {error}")
-        print("\nThe Knowledge Graph Agent requires distributed infrastructure.")
-        print("After setting up databases, run the initialization scripts:")
-        print("  python src/db/init_pkg.py      # Neo4j initialization")
-        print("  python src/db/init_postgres.py # PostgreSQL initialization")
-        print("\nSee README_KG.md for complete setup instructions.")
-        sys.exit(1)
-
+        print("CRITICAL INFRASTRUCTURE ISSUES:")
+        for item in errors:
+            print(f"  - {item}")
+        print("\nFix these and rerun.")
+        raise SystemExit(1)
     if warnings:
-        print("⚠️  INFRASTRUCTURE WARNINGS:")
-        for warning in warnings:
-            print(f"  • {warning}")
-        print("The system may work with limited functionality.\n")
+        print("INFRASTRUCTURE WARNINGS:")
+        for item in warnings:
+            print(f"  - {item}")
+        print("")
 
-    if args.interactive:
-        # Run interactive mode with command line arguments
-        main(
-            debug_mode=args.debug_mode,
-            enable_rich_output=args.enable_rich_output,
-            show_interactive=args.show_interactive,
-        )
-    else:
-        # Parse user input from command line arguments or user input
-        if args.goal:
-            goal_string = " ".join(args.goal)
-        else:
-            # Loop until user provides non-empty input
-            while True:
-                goal_string = input("Enter your learning goal: ")
-                if goal_string is not None and goal_string != "":
-                    break
+    goal_string = _resolve_goal(args)
+    thread_id = args.thread_id.strip() or f"kg_{uuid.uuid4().hex[:12]}"
+    print(f"Starting KG session with thread_id={thread_id}")
 
-        # Build preferences from command line arguments
-        preferences = {}
-        if args.focus_areas:
-            preferences["focus_areas"] = args.focus_areas
-        if args.learning_style:
-            preferences["learning_style"] = args.learning_style
-
-        # Run the KG agent with the provided parameters
-        ask_kg(
+    result = asyncio.run(
+        run_interactive_kg_session(
             goal_string=goal_string,
-            raw_topic_string=args.topic,
-            prior_knowledge_level=args.knowledge_level,
-            preferences=preferences,
+            thread_id=thread_id,
+            enable_deep_thinking=args.enable_deep_thinking,
             debug_mode=args.debug_mode,
             enable_rich_output=args.enable_rich_output,
             show_interactive=args.show_interactive,
         )
+    )
+
+    print("\n=== KG Session Result ===")
+    _print_json(result)
+
+
+if __name__ == "__main__":
+    main()

@@ -320,7 +320,6 @@ The session orchestrator returns different completion statuses:
 
 ### Partial Completion Status
 - **`PARTIAL_MAX_ITERATIONS`**: Reached iteration limit but made progress
-- **`PARTIAL_NO_PROGRESS`**: No new concepts found but goal incomplete  
 - **`PARTIAL_EDUCATIONAL_CONTENT_ISSUES`**: Knowledge graph complete but content generation had failures
 
 ### Failure Status
@@ -333,7 +332,6 @@ The system uses these criteria for research continuation:
 - **`CONTINUE_RESEARCH`**: More concepts need definition
 - **`STOP_PREREQUISITES_MET`**: Learning path complete
 - **`STOP_MAX_ITERATIONS`**: Iteration limit reached
-- **`STOP_NO_PROGRESS`**: No actionable concepts remaining
 - **`STOP_ERROR`**: Error requiring termination
 
 ## Programmatic Usage
@@ -439,7 +437,7 @@ max_iteration_main: 5               # Total research iterations
 ```
 
 **Q: The system seems to run forever**
-A: The system uses iterative research with stopping criteria. Check session status - it may be `PARTIAL_MAX_ITERATIONS` or `PARTIAL_NO_PROGRESS` indicating completion.
+A: The system uses iterative research with stopping criteria. Check session status - it may be `PARTIAL_MAX_ITERATIONS` indicating bounded completion.
 
 **Q: How do I monitor what's happening?**
 A: Use rich debug mode (`--debug-mode rich --enable-rich-output`) to see real-time progress, or enable LangSmith tracing for detailed monitoring.

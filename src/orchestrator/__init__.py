@@ -26,9 +26,12 @@ from .debug_utils import (
 
 # Data models
 from .models import (
+    KGBootstrapFailureResponse,
+    KGInterruptedResponse,
+    KGInterruptPayload,
+    KGSessionInput,
     LearnerPersonalizationRequest,
     SessionLog,
-    UserQueryContext,
 )
 from .session import (
     session_orchestrator,
@@ -40,9 +43,12 @@ __all__ = [
     "session_orchestrator",
     "session_orchestrator_celery_task",
     # Data models
+    "KGSessionInput",
+    "KGInterruptPayload",
+    "KGInterruptedResponse",
+    "KGBootstrapFailureResponse",
     "LearnerPersonalizationRequest",
     "SessionLog",
-    "UserQueryContext",
     # Debug utilities
     "create_debug_session_logger",
     "EnhancedSessionLogger",

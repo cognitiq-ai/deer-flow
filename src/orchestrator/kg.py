@@ -1,4 +1,3 @@
-import os
 import uuid
 from collections import defaultdict
 from datetime import datetime
@@ -13,104 +12,84 @@ from src.kg.base_models import (
     Relationship,
     RelationshipType,
 )
+from src.kg.bootstrap.schemas import BootstrapContract
 from src.kg.builder import concept_research_graph, infer_relationship_graph
 from src.kg.state import (
     ConceptResearchState,
     InferRelationshipsState,
     InferRelationshipState,
 )
-from src.llms.llm import generate_embedding
 from src.orchestrator.models import (
     LearnerPersonalizationRequest,
     SessionLog,
-    UserQueryContext,
 )
 
-DEFAULT_EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "auto")
 
-
-async def identify_goal(
-    uqc: UserQueryContext,
+async def seed_awg_from_bootstrap(
+    bootstrap_contract: BootstrapContract,
     pkg_interface: PKGInterface,
     session_log: SessionLog,
-) -> Tuple[Optional[ConceptNode], AgentWorkingGraph]:
-    """
-    Identify Goal And Initial AWG helper function.
-
-    Purpose: To find/create GoalNode, and initialize AWG with relevant context from PKG.
-
-    Args:
-        uqc: UserQueryContext
-        pkg_interface: PKGInterface instance
-        session_log: Session logger
-
-    Returns:
-        Tuple of (goal_concept, initial_awg)
-    """
-    session_log.log("INFO", f"Starting goal identification for: {uqc.goal_string}")
-
+) -> Tuple[Optional[ConceptNode], AgentWorkingGraph, List[ConceptNode]]:
+    """Create and persist goal/seed nodes from bootstrap output."""
     try:
-        # Step 1: Use vector search to find existing goal node
-        identified_goal = None
-        session_log.log("INFO", f"Search goal in PKG: {uqc.goal_string}")
+        goal_name = bootstrap_contract.canonical_goal.normalized_goal_outcome
+        session_log.log("INFO", f"Seeding AWG from bootstrap goal: {goal_name}")
 
-        # Generate embedding for goal string
-        goal_embedding = await generate_embedding(
-            uqc.goal_string, provider=DEFAULT_EMBEDDING_PROVIDER
+        goal_node = ConceptNode(
+            id=str(uuid.uuid4()),
+            name=goal_name,
+            node_type="goal",
+            updated_at=datetime.now(),
         )
-        session_log.log(
-            "INFO", f"Generated goal embedding with dimension: {len(goal_embedding)}"
-        )
+        goal_node = pkg_interface.find_or_create_node(goal_node)
+        goal_node.exists_in_pkg = True
 
-        # Search for existing goal nodes using vector similarity
-        existing_goals = pkg_interface.vector_search_name(
-            goal_embedding, similarity_threshold=0.95, limit=1, node_type="goal"
-        )
+        awg = AgentWorkingGraph()
+        awg.add_node(goal_node)
 
-        if existing_goals:
-            existing_goal = existing_goals[0]
-            session_log.log(
-                "INFO",
-                f"Found existing goal node: {existing_goal.id}",
-                {"goal_name": existing_goal.name, "status": existing_goal.status},
-            )
-            identified_goal = existing_goal
-        else:
-            session_log.log("INFO", "No existing goal found, creating new goal node")
-
-        # If no existing goal found, create a new one
-        if identified_goal is None:
-            goal_node = ConceptNode(
+        seed_concepts: List[ConceptNode] = []
+        for concept_name in bootstrap_contract.selected_initial_focus_concepts:
+            concept_node = ConceptNode(
                 id=str(uuid.uuid4()),
-                name=uqc.goal_string,
-                node_type="goal",
-                name_embedding=goal_embedding,
+                name=concept_name,
+                topic=goal_name,
                 updated_at=datetime.now(),
             )
+            concept_node = pkg_interface.find_or_create_node(concept_node)
+            concept_node.exists_in_pkg = True
+            awg.add_node(concept_node)
+            seed_concepts.append(concept_node)
 
-            # Create the goal node in PKG
-            identified_goal = pkg_interface.find_or_create_node(goal_node)
+            fulfills_goal = Relationship(
+                id=str(uuid.uuid4()),
+                source_node_id=concept_node.id,
+                target_node_id=goal_node.id,
+                type=RelationshipType.FULFILS_GOAL,
+                updated_at=datetime.now(),
+            )
+            try:
+                fulfills_goal = pkg_interface.find_or_create_relationship(fulfills_goal)
+            except Exception as rel_err:
+                session_log.log(
+                    "WARNING",
+                    f"Failed to persist FULFILS_GOAL relationship: {rel_err}",
+                    {"source": concept_node.name, "target": goal_node.name},
+                )
+            awg.add_relationship(fulfills_goal)
 
         session_log.log(
             "INFO",
-            f"Goal node identified/created: {identified_goal.id}",
-            {"goal_name": identified_goal.name},
+            "Bootstrap seeding complete",
+            {
+                "goal_id": goal_node.id,
+                "seed_concept_count": len(seed_concepts),
+                "seed_concepts": [node.name for node in seed_concepts],
+            },
         )
-
-        # Step 2: Find concept neighbors that fulfill this goal and match user's topic
-        initial_awg = AgentWorkingGraph()
-        initial_awg.add_node(identified_goal)
-
-        session_log.log(
-            "INFO",
-            f"Initial AWG created with goal {identified_goal.name}",
-        )
-
-        return identified_goal, initial_awg
-
+        return goal_node, awg, seed_concepts
     except Exception as e:
-        session_log.log("ERROR", f"Failed to identify goal and initialize AWG: {e}")
-        return None, AgentWorkingGraph()
+        session_log.log("ERROR", f"Failed to seed AWG from bootstrap: {e}")
+        return None, AgentWorkingGraph(), []
 
 
 async def inner_loop(
@@ -356,9 +335,7 @@ def awg_consolidator(
 
         initial_relationship_state = InferRelationshipsState(
             infer_relationships=[
-                InferRelationshipState(
-                    concept_a=concept_a.profile, concept_b=concept_b.profile
-                )
+                InferRelationshipState(concept_a=concept_a, concept_b=concept_b)
                 for concept_a, concept_b in concept_pairs
             ],
             relationships=[],
@@ -601,24 +578,41 @@ def criteria_check(
         if not goal_node_in_awg.definition:
             session_log.log(
                 "INFO",
-                "KG2: Goal node needs definition/validation",
+                "KG2: Goal node has no definition; skipping as focus concept",
                 {
                     "status": goal_node_in_awg.status,
                     "confidence": goal_node_in_awg.confidence,
                     "has_definition": bool(goal_node_in_awg.definition),
                 },
             )
-            focus_concepts_output.append(goal_node_in_awg)
 
-        # Step 2: Trace Prerequisites for GN_User_Current within AWG_Current
-        prerequisite_node_ids = awg_current.find_prerequisites_path(
-            goal_node_current.id
-        )
+        # Step 2: Trace prerequisite paths from concepts that fulfill the goal.
+        # If no goal fulfillers are present, fallback to goal-anchored traversal.
+        goal_dependency_roots = {
+            rel.source_node_id
+            for rel in awg_current.get_relationships_by_target(
+                goal_node_current.id, RelationshipType.FULFILS_GOAL
+            )
+        }
+        if not goal_dependency_roots:
+            goal_dependency_roots = {goal_node_current.id}
+
+        prerequisite_node_ids = []
+        seen_prereq_ids = set()
+        for root_id in goal_dependency_roots:
+            for prereq_id in awg_current.find_prerequisites_path(root_id):
+                if prereq_id not in seen_prereq_ids:
+                    seen_prereq_ids.add(prereq_id)
+                    prerequisite_node_ids.append(prereq_id)
 
         session_log.log(
             "INFO",
             f"KG2: Found {len(prerequisite_node_ids)} prerequisites in dependency path",
-            {"prerequisite_ids": prerequisite_node_ids[:5]},  # Log first 5 for brevity
+            {
+                "root_count": len(goal_dependency_roots),
+                "root_ids": list(goal_dependency_roots)[:5],
+                "prerequisite_ids": prerequisite_node_ids[:5],
+            },  # Log first 5 for brevity
         )
 
         # Step 3: Check each prerequisite for resolution status
@@ -628,6 +622,11 @@ def criteria_check(
                 session_log.log(
                     "WARNING", f"KG2: Prerequisite node {prereq_id} not found in AWG"
                 )
+                continue
+            if (
+                prereq_node.id == goal_node_current.id
+                or prereq_node.node_type == "goal"
+            ):
                 continue
 
             # Check if prerequisite is unresolved
@@ -668,40 +667,39 @@ def criteria_check(
                 "INFO", f"KG2: Maximum iterations ({iteration_main_cycle}) reached"
             )
 
-        elif total_unresolved == 0:
-            decision = "STOP_NO_PROGRESS"
-            session_log.log(
-                "INFO", "KG2: No unresolved concepts found but goal incomplete"
-            )
-
         # Step 5: Prioritize and Select Top N focus concepts for next iteration
         if decision == "CONTINUE_RESEARCH":
             all_focus_candidates = focus_concepts_output + unresolved_stubs
 
             # Prioritize by:
-            # 1. Goal node itself (highest priority)
-            # 2. Stubs that are direct prerequisites of well-defined nodes
+            # 1. Stubs with some existing definition but low confidence
+            # 2. Higher confidence stubs
             # 3. Older stubs
-            # 4. Stubs with some existing definition but low confidence
             def priority_score(node: ConceptNode) -> tuple:
                 # Higher scores = higher priority (will be sorted in reverse)
                 # Handle both ConceptNode and ConceptPrerequisite objects
                 if hasattr(node, "id"):  # ConceptNode
-                    is_goal = 1 if node.id == goal_node_current.id else 0
                     has_some_definition = 1 if node.definition else 0
                     confidence_score = node.confidence
                     # Use negative timestamp so older nodes get higher priority
                     age_score = -(node.updated_at.timestamp())
                 else:  # ConceptPrerequisite
-                    is_goal = 0  # Prerequisites are never goal nodes
                     has_some_definition = 1 if node.profile else 0
                     confidence_score = node.confidence
                     age_score = 0  # No timestamp for prerequisites
 
-                return (is_goal, has_some_definition, confidence_score, age_score)
+                return (has_some_definition, confidence_score, age_score)
 
             # Sort by priority (highest first) and limit to max batch size
             max_focus_concepts = config.max_focus_concepts
+            all_focus_candidates = [
+                node
+                for node in all_focus_candidates
+                if not (
+                    getattr(node, "id", None) == goal_node_current.id
+                    or getattr(node, "node_type", "") == "goal"
+                )
+            ]
             sorted_candidates = sorted(
                 all_focus_candidates, key=priority_score, reverse=True
             )

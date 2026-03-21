@@ -90,8 +90,8 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
 
     # Build the prompt
     infer_rel_prompt = infer_relationships_instructions.format(
-        concept_a_str=to_yaml(concept_a),
-        concept_b_str=to_yaml(concept_b),
+        concept_a_str=to_yaml(concept_a.profile),
+        concept_b_str=to_yaml(concept_b.profile),
         types_str=to_yaml([rel.code for rel in rel_types]),
     )
     rels = []

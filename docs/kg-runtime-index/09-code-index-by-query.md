@@ -1,0 +1,124 @@
+# Code Index by Query
+
+Last reviewed: 2026-03-18  
+Purpose: retrieval index for human reviewers
+
+Use this as the first stop when you have a specific runtime question.
+
+## Query -> Where to Look
+
+### "Where does interactive execution start?"
+
+- `main_kg.py::main`
+- `main_kg.py::run_interactive_kg_session`
+- `src/orchestrator/session.py::session_orchestrator`
+
+### "How does interrupt/resume actually work?"
+
+- `src/orchestrator/session.py::session_orchestrator` (bootstrap stream + interrupt extraction)
+- `src/kg/bootstrap/nodes.py::bootstrap_ask`
+- `src/kg/bootstrap/nodes.py::bootstrap_proceed_gate`
+- `src/kg/bootstrap/builder.py::build_bootstrap_graph_with_memory`
+- `src/orchestrator/models.py::KGInterruptedResponse`
+
+### "How is bootstrap routed?"
+
+- `src/kg/bootstrap/builder.py::_build_bootstrap_graph`
+- `src/kg/bootstrap/routing.py::route_after_bootstrap_extract`
+- `src/kg/bootstrap/routing.py::route_after_bootstrap_proceed_gate`
+
+### "What fields are in bootstrap contract?"
+
+- `src/kg/bootstrap/schemas.py::BootstrapContract`
+- `src/kg/bootstrap/schemas.py::CanonicalGoal`
+- `src/kg/bootstrap/schemas.py::AnchorSet`
+- `src/kg/bootstrap/schemas.py::FeasibilityAssessment`
+
+### "How are seed concepts created from bootstrap?"
+
+- `src/orchestrator/kg.py::seed_awg_from_bootstrap`
+- `src/db/pkg_interface.py::find_or_create_node`
+- `src/db/pkg_interface.py::find_or_create_relationship`
+
+### "How are current focus concepts chosen each iteration?"
+
+- `src/orchestrator/kg.py::criteria_check`
+- `src/kg/base_models.py::RelationshipType.FULFILS_GOAL` (goal-fulfilling roots for prerequisite traversal)
+- `src/kg/agent_working_graph.py::find_prerequisites_path`
+- `src/config/configuration.py::Configuration` (`max_focus_concepts`, `max_iteration_main`)
+
+### "Where is initial profile research defined?"
+
+- `src/kg/profile/nodes.py::initial_profile_research`
+- `src/kg/profile/nodes.py::propose_profile`
+- `src/kg/profile/nodes.py::evaluate_profile`
+- `src/kg/profile/nodes.py::profile_completed`
+- `src/kg/research/nodes.py` (search/extract routing and execution)
+
+### "Where is personalization applied?"
+
+- `src/kg/personalization/nodes.py::route_after_personalization_router`
+- `src/kg/personalization/nodes.py::personalization_preprocess`
+- `src/kg/personalization/nodes.py::personalization_fit`
+- `src/kg/personalization/nodes.py::personalization_mode`
+- `src/kg/personalization/nodes.py::personalization_delivery`
+- `src/kg/personalization/nodes.py::personalization_assessment`
+- `src/kg/personalization/nodes.py::personalization_prereq_policy`
+- `src/kg/personalization/nodes.py::route_after_personalization_prereq_policy`
+
+### "Where are prerequisites proposed/evaluated/merged?"
+
+- `src/kg/prerequisites/nodes.py::initial_prerequisite_research`
+- `src/kg/prerequisites/nodes.py::propose_prerequisites`
+- `src/kg/prerequisites/nodes.py::evaluate_prerequisites`
+- `src/kg/prerequisites/nodes.py::action_prerequisites`
+- `src/kg/prerequisites/nodes.py::prerequisites_completed`
+- `src/kg/prerequisites/nodes.py::merge_prerequisites`
+
+### "Where are related concepts and relationship inference handled?"
+
+- `src/kg/relationships/nodes.py::get_related_concepts`
+- `src/kg/relationships/nodes.py::infer_relationship`
+- `src/kg/relationships/nodes.py::merge_related_concepts`
+- `src/kg/builder.py::create_infer_relationship_graph`
+
+### "Where is AWG merge and dedup done?"
+
+- `src/orchestrator/kg.py::awg_consolidator`
+- `src/kg/agent_working_graph.py::merge_awg`
+- `src/kg/agent_working_graph.py::merge_relationship`
+- `src/kg/agent_working_graph.py::merge_concepts`
+- `src/kg/agent_working_graph.py::resolve_cycles`
+
+### "Where does commit to persistent graph happen?"
+
+- `src/orchestrator/kg.py::awg_consolidator` (commit caller)
+- `src/db/pkg_interface.py::commit_changes`
+- `src/db/pkg_interface.py::find_or_create_node`
+- `src/db/pkg_interface.py::find_or_create_relationship`
+- `src/db/pkg_interface.py::detect_relationship_cycle`
+
+### "What response/status does orchestrator return?"
+
+- `src/orchestrator/session.py::session_orchestrator`
+- `src/orchestrator/session.py::_generate_session_summary`
+- `src/orchestrator/models.py::KGInterruptedResponse`
+- `src/orchestrator/models.py::KGBootstrapFailureResponse`
+
+### "What request schema does API accept?"
+
+- `src/server/kg_request.py::KGSessionRequest`
+- `src/orchestrator/models.py::KGSessionInput`
+
+## Fast Navigation Paths
+
+- Start-to-first-KG-handoff: `01` -> `02` -> `03`
+- Iterative processing lifecycle: `04` -> `05` -> `06` -> `07`
+- Risk and divergence review: `08`
+- Diagram-first orientation: `diagrams/overview.md`
+
+## Related Modules
+
+- [Runtime Index Home](./README.md)
+- [Failure Modes and Gap Register](./08-failure-modes-and-gap-register.md)
+- [Runtime Diagrams](./diagrams/overview.md)

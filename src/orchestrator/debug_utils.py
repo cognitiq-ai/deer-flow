@@ -15,7 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from src.kg.agent_working_graph import AgentWorkingGraph
-from src.orchestrator.models import SessionLog, UserQueryContext
+from src.orchestrator.models import SessionLog
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -42,7 +42,7 @@ except ImportError:
 class DebugCallbacks(Protocol):
     """Protocol defining optional debug callback methods."""
 
-    def on_session_start(self, uqc: UserQueryContext) -> None:
+    def on_session_start(self, session_input: Any) -> None:
         """Called when session starts."""
         ...
 
@@ -78,7 +78,7 @@ class DebugCallbacks(Protocol):
 class NoOpDebugCallbacks:
     """No-operation implementation of debug callbacks for production use."""
 
-    def on_session_start(self, uqc: UserQueryContext) -> None:
+    def on_session_start(self, session_input: Any) -> None:
         pass
 
     def on_iteration_start(self, iteration: int, focus_concepts: List[Any]) -> None:
@@ -118,13 +118,21 @@ class RichDebugCallbacks:
         self.current_progress: Optional[Any] = None
         self.current_task_id: Optional[int] = None
 
-    def on_session_start(self, uqc: UserQueryContext) -> None:
+    def on_session_start(self, session_input: Any) -> None:
         """Display session start information."""
+        if isinstance(session_input, dict):
+            goal = session_input.get("goal_string") or session_input.get("goal") or ""
+            topic = session_input.get("raw_topic_string")
+            prior_knowledge = session_input.get("prior_knowledge_level")
+        else:
+            goal = getattr(session_input, "goal_string", "")
+            topic = getattr(session_input, "raw_topic_string", None)
+            prior_knowledge = getattr(session_input, "prior_knowledge_level", None)
         panel = Panel(
             f"🚀 Starting Knowledge Graph Population Session\n\n"
-            f"Goal: {uqc.goal_string}\n"
-            f"Topic: {uqc.raw_topic_string}\n"
-            f"Prior Knowledge Level: {uqc.prior_knowledge_level}",
+            f"Goal: {goal}\n"
+            f"Topic: {topic}\n"
+            f"Prior Knowledge Level: {prior_knowledge}",
             title="Session Started",
             border_style="green",
         )
@@ -309,18 +317,26 @@ class EnhancedSessionLogger(SessionLog):
         super().__init__()
         self.debug_callbacks = debug_callbacks or NoOpDebugCallbacks()
 
-    def log_session_start(self, uqc: UserQueryContext) -> None:
+    def log_session_start(self, session_input: Any) -> None:
         """Log session start with optional debug callbacks."""
+        if isinstance(session_input, dict):
+            goal = session_input.get("goal_string") or session_input.get("goal") or ""
+            topic = session_input.get("raw_topic_string")
+            prior_knowledge = session_input.get("prior_knowledge_level")
+        else:
+            goal = getattr(session_input, "goal_string", "")
+            topic = getattr(session_input, "raw_topic_string", None)
+            prior_knowledge = getattr(session_input, "prior_knowledge_level", None)
         self.log(
             "INFO",
             "Session orchestrator started",
             {
-                "goal": uqc.goal_string,
-                "topic": uqc.raw_topic_string,
-                "prior_knowledge": uqc.prior_knowledge_level,
+                "goal": goal,
+                "topic": topic,
+                "prior_knowledge": prior_knowledge,
             },
         )
-        self.debug_callbacks.on_session_start(uqc)
+        self.debug_callbacks.on_session_start(session_input)
 
     def log_iteration_start(self, iteration: int, focus_concepts: List[Any]) -> None:
         """Log iteration start with optional debug callbacks."""

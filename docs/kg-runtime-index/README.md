@@ -1,0 +1,56 @@
+# Interactive KG Runtime Index
+
+Last reviewed: 2026-03-18  
+Runtime path: `main_kg.py --interactive`  
+Primary entrypoint: `main_kg.py`
+
+This directory is a living, code-accurate documentation index for the interactive KG runtime path. It is optimized for human retrieval: you should be able to start from a question, jump to the right module, and then jump to the exact code symbol.
+
+## How to Use This Index
+
+- Read `01-entrypoint-and-interactive-loop.md` for startup, CLI behavior, and interrupt/resume control flow.
+- Read `02-bootstrap-state-machine.md` for bootstrap graph behavior and contract finalization.
+- Read `03-bootstrap-to-awg-seeding.md` for how bootstrap output becomes initial goal/seed concepts in AWG and PKG.
+- Read `04-main-loop-focus-selection.md` for iteration control and next-focus selection.
+- Read `05-inner-loop-profile-personalization-prerequisites.md` for per-concept KG3 behavior.
+- Read `06-awg-consolidation-dedup-and-relationship-inference.md` for KG4 merge and dedup details.
+- Read `07-commit-paths-neo4j-and-session-checkpointing.md` for persistence semantics (Neo4j + checkpointing/session outputs).
+- Read `08-failure-modes-and-gap-register.md` for explicit intended-vs-current divergences and failure taxonomy.
+- Read `09-code-index-by-query.md` as the retrieval index by intent/query.
+- Read `diagrams/overview.md` for global and state-machine mermaid diagrams.
+
+## 9-Step Conceptual Flow Mapping
+
+- Step 1 (Bootstrap Q&A) -> `02-bootstrap-state-machine.md`
+- Step 2 (Seed concepts) -> `03-bootstrap-to-awg-seeding.md`
+- Step 3 (Identify focus) -> `04-main-loop-focus-selection.md`
+- Step 4 (Initial profile research) -> `05-inner-loop-profile-personalization-prerequisites.md`
+- Step 5 (Personalization) -> `05-inner-loop-profile-personalization-prerequisites.md`
+- Step 6 (Prerequisite discovery) -> `05-inner-loop-profile-personalization-prerequisites.md`
+- Step 7 (AWG consolidation) -> `06-awg-consolidation-dedup-and-relationship-inference.md`
+- Step 8 (Commit: KG + session/checkpoint) -> `07-commit-paths-neo4j-and-session-checkpointing.md`
+- Step 9 (Repeat 3-8) -> `04-main-loop-focus-selection.md` + links to `05/06/07`
+
+## Documentation Conventions
+
+Each module follows this structure:
+
+1. What happens now (current implementation)
+2. Evidence (file + symbol references)
+3. Intended vs current gap
+4. Plausible failure modes (high-level)
+
+## Update Protocol (Living Doc)
+
+- Update this index whenever runtime behavior changes in:
+  - `main_kg.py`
+  - `src/orchestrator/session.py`
+  - `src/orchestrator/kg.py`
+  - `src/kg/bootstrap/*`
+  - `src/kg/builder.py`
+  - `src/kg/*/nodes.py`
+  - `src/kg/agent_working_graph.py`
+  - `src/db/pkg_interface.py`
+  - request/response contracts in `src/orchestrator/models.py` and `src/server/kg_request.py`
+- Prefer symbol-level references over brittle line-level references.
+- Keep the gap register explicit: do not silently “paper over” behavior divergences.

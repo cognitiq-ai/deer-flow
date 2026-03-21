@@ -63,6 +63,12 @@ class Configuration:
     max_focus_concepts = 5  # Maximum number of focus concepts per iter
     max_parallel_inner_loops = 5  # Maximum number of parallel inner loops
     max_research_depth = 100  # Maximum number of research depth
+    max_bootstrap_rounds = 10  # Max extract-ask clarification rounds
+    bootstrap_single_anchor_margin = 0.15  # Confidence gap for dominant single anchor
+    bootstrap_dominant_confidence_threshold = (
+        0.7  # Minimum confidence for dominant anchor
+    )
+    bootstrap_max_initial_anchors = 3  # Max initial focus concepts for multi-anchor
 
     # Educational Content Generation
     enable_content = True  # Whether to generate content after KG

@@ -231,7 +231,9 @@ class Relationship(BaseModel):
     @field_validator("profile", mode="before")
     @classmethod
     def parse_profile(cls, value: Any) -> Optional[RelationshipProfile]:
-        if value is None or isinstance(value, RelationshipProfile):
+        if value is None or value == "null":
+            return None
+        if isinstance(value, RelationshipProfile):
             return value
         if isinstance(value, str):
             return RelationshipProfile.model_validate_json(value)

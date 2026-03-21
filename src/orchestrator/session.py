@@ -5,27 +5,39 @@ This module implements the KG agent components as specified in Knowledge_Graph_A
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from dotenv import load_dotenv
+from langgraph.types import Command
 
 from src.config import Configuration
 from src.db.pkg_interface import PKGInterface
+from src.kg.bootstrap.builder import build_bootstrap_graph_with_memory
+from src.kg.bootstrap.schemas import BootstrapContract
+from src.kg.bootstrap.state import BootstrapState
 from src.orchestrator.content import content_generator
 from src.orchestrator.debug_utils import EnhancedSessionLogger
 from src.orchestrator.kg import (
     awg_consolidator,
     criteria_check,
-    identify_goal,
     inner_loop,
+    seed_awg_from_bootstrap,
 )
-from src.orchestrator.models import SessionLog, UserQueryContext
+from src.orchestrator.models import (
+    KGBootstrapFailureResponse,
+    KGInterruptedResponse,
+    KGInterruptPayload,
+    KGSessionInput,
+    LearnerPersonalizationRequest,
+    SessionLog,
+)
 
 load_dotenv()
+bootstrap_graph_with_memory = build_bootstrap_graph_with_memory()
 
 
 async def session_orchestrator(
-    user_query_context_data: Dict[str, Any],
+    session_request_data: Union[KGSessionInput, Dict[str, Any]],
     session_logger: Optional[EnhancedSessionLogger] = None,
 ) -> Dict[str, Any]:
     """
@@ -35,7 +47,7 @@ async def session_orchestrator(
     the main iterative research loop, and finalization.
 
     Args:
-        user_query_context_data: Serialized UserQueryContext data
+        session_request_data: Serialized KG session request data
 
     Returns:
         Tuple of (final_session_outcome, session_summary)
@@ -47,7 +59,7 @@ async def session_orchestrator(
         session_log_global = session_logger
 
     session_log_global.log(
-        "INFO", "KG1: Starting Session Orchestrator", user_query_context_data
+        "INFO", "KG1: Starting Session Orchestrator", session_request_data
     )
 
     # Get the configuration
@@ -56,12 +68,36 @@ async def session_orchestrator(
     overlays_by_concept_id: Dict[str, Dict[str, Any]] = {}
 
     try:
-        # Reconstruct UserQueryContext
-        uqc = UserQueryContext(**user_query_context_data)
+        session_input = (
+            session_request_data
+            if isinstance(session_request_data, KGSessionInput)
+            else KGSessionInput(**session_request_data)
+        )
 
-        # Trigger session start callback
+        goal_string = (session_input.goal_string or "").strip()
+        thread_id = session_input.thread_id
+        interrupt_feedback = session_input.interrupt_feedback
+        enable_deep_thinking = bool(session_input.enable_deep_thinking)
+        config.enable_deep_thinking = enable_deep_thinking
+        personalization_request_data = (
+            session_input.personalization.model_dump()
+            if session_input.personalization
+            else None
+        )
+        personalization_request = (
+            LearnerPersonalizationRequest(**personalization_request_data)
+            if personalization_request_data
+            else None
+        )
+
         if hasattr(session_log_global, "log_session_start"):
-            session_log_global.log_session_start(uqc)
+            session_log_global.log_session_start(
+                {
+                    "goal_string": goal_string,
+                    "thread_id": thread_id,
+                    "interrupt_feedback": bool(interrupt_feedback),
+                }
+            )
 
         # Get configuration
         pkg_interface = PKGInterface()
@@ -71,21 +107,93 @@ async def session_orchestrator(
         iteration_main_current = 0
         session_log_global.log("INFO", "KG1: Session initialization started")
 
-        # Call IdentifyGoalAndInitialAWG
-        identified_goal, initial_awg = await identify_goal(
-            uqc, pkg_interface, session_log_global
+        bootstrap_input: Any = None
+        if interrupt_feedback:
+            bootstrap_input = Command(resume=interrupt_feedback)
+        else:
+            bootstrap_input = BootstrapState(
+                initial_user_message=goal_string,
+                personalization_request=personalization_request,
+                max_bootstrap_rounds=config.max_bootstrap_rounds,
+                last_user_message=goal_string,
+            )
+
+        bootstrap_config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "enable_deep_thinking": enable_deep_thinking,
+            }
+        }
+        bootstrap_final_state = None
+        bootstrap_interrupt = None
+        for mode, chunk in bootstrap_graph_with_memory.stream(
+            bootstrap_input,
+            config=bootstrap_config,
+            stream_mode=["updates", "values"],
+        ):
+            if (
+                mode == "updates"
+                and isinstance(chunk, dict)
+                and "__interrupt__" in chunk
+            ):
+                interrupt_event = chunk["__interrupt__"][0]
+                bootstrap_interrupt = {
+                    "id": interrupt_event.ns[0] if interrupt_event.ns else thread_id,
+                    "content": interrupt_event.value,
+                }
+            elif mode == "values":
+                bootstrap_final_state = chunk
+
+        if bootstrap_interrupt:
+            session_log_global.log("INFO", "Bootstrap interrupted for user feedback")
+            return KGInterruptedResponse(
+                thread_id=thread_id,
+                interrupt=KGInterruptPayload(**bootstrap_interrupt),
+            ).model_dump()
+
+        if not bootstrap_final_state:
+            session_log_global.log("ERROR", "Bootstrap produced no final state")
+            return KGBootstrapFailureResponse(
+                thread_id=thread_id,
+                error="Bootstrap did not complete with a final state.",
+            ).model_dump()
+
+        bootstrap_contract_data = bootstrap_final_state.get("bootstrap_contract")
+        if not bootstrap_contract_data:
+            session_log_global.log("ERROR", "Bootstrap did not produce contract")
+            return KGBootstrapFailureResponse(
+                thread_id=thread_id,
+                error="Bootstrap contract is required to proceed.",
+            ).model_dump()
+
+        bootstrap_contract = (
+            bootstrap_contract_data
+            if isinstance(bootstrap_contract_data, BootstrapContract)
+            else BootstrapContract(**bootstrap_contract_data)
+        )
+
+        (
+            identified_goal,
+            initial_awg,
+            seed_focus_concepts,
+        ) = await seed_awg_from_bootstrap(
+            bootstrap_contract,
+            pkg_interface,
+            session_log_global,
         )
 
         if identified_goal is None:
-            session_log_global.log("ERROR", "KG1: Failed to identify goal node")
-            return _generate_session_summary(session_log_global, {})
+            session_log_global.log("ERROR", "Failed to seed goal node from bootstrap")
+            return KGBootstrapFailureResponse(
+                thread_id=thread_id,
+                error="Bootstrap seeding failed for goal node.",
+            ).model_dump()
 
         gn_user_session = identified_goal
         awg_session = initial_awg
-
-        # Determine initial focus concepts
-        decision_criteria, focus_concepts_next_iteration = criteria_check(
-            gn_user_session, awg_session, 0, session_log_global
+        focus_concepts_next_iteration = seed_focus_concepts
+        decision_criteria = (
+            "CONTINUE_RESEARCH" if focus_concepts_next_iteration else "STOP_ERROR"
         )
 
         session_log_global.log(
@@ -96,6 +204,7 @@ async def session_orchestrator(
                 "initial_awg_nodes": len(awg_session.nodes),
                 "initial_awg_relationships": len(awg_session.relationships),
                 "initial_focus_concepts": len(focus_concepts_next_iteration),
+                "bootstrap_goal": bootstrap_contract.canonical_goal.normalized_goal_outcome,
             },
         )
 
@@ -152,9 +261,7 @@ async def session_orchestrator(
                             "goal_context_data": gn_user_session.model_dump(),
                             "awg_context_data": awg_session.model_dump(),
                             "session_log_data": {"logs": session_log_global.logs},
-                            "personalization_request_data": uqc.personalization.model_dump()
-                            if getattr(uqc, "personalization", None)
-                            else None,
+                            "personalization_request_data": bootstrap_contract.personalization.model_dump(),
                         }
 
                         # Submit KG3 inner loop processor (try Celery, fallback to direct call)
@@ -321,8 +428,6 @@ async def session_orchestrator(
         elif decision_criteria == "STOP_MAX_ITERATIONS":
             overall_session_status = "PARTIAL_MAX_ITERATIONS"
             order_nodes = True
-        elif decision_criteria == "STOP_NO_PROGRESS":
-            overall_session_status = "PARTIAL_NO_PROGRESS"
         elif decision_criteria == "STOP_ERROR":
             overall_session_status = "FAILURE_ERROR"
         elif iteration_main_current >= config.max_iteration_main:
@@ -549,6 +654,12 @@ async def session_orchestrator(
                 "overall_status": overall_session_status,
                 "ordered_nodes": ordered_nodes,
                 "educational_content_results": educational_content_results,
+                "bootstrap_status": "COMPLETED",
+                "bootstrap_contract": bootstrap_contract.model_dump(),
+                "bootstrap_seed_concepts": [
+                    concept.name for concept in seed_focus_concepts
+                ],
+                "thread_id": thread_id,
             },
         )
 
@@ -582,20 +693,20 @@ async def session_orchestrator(
 
 
 def session_orchestrator_celery_task(
-    user_query_context_data: Dict[str, Any],
+    session_request_data: Union[KGSessionInput, Dict[str, Any]],
     session_logger: Optional[EnhancedSessionLogger] = None,
 ) -> Dict[str, Any]:
     """
     Celery task wrapper for session_orchestrator_and_main_loop.
 
     Args:
-        user_query_context_data: Serialized UserQueryContext data
+        session_request_data: Serialized KG session request data
         session_logger: Optional enhanced session logger for debug capabilities
 
     Returns:
         Dictionary containing session summary
     """
-    return asyncio.run(session_orchestrator(user_query_context_data, session_logger))
+    return asyncio.run(session_orchestrator(session_request_data, session_logger))
 
 
 def _generate_session_summary(

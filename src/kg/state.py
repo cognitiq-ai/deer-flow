@@ -333,8 +333,8 @@ class InferRelationshipState(BaseModel):
     """State for relationship inference."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    concept_a: ConceptProfileOutput
-    concept_b: ConceptProfileOutput
+    concept_a: ConceptNode
+    concept_b: ConceptNode
     relationship_types: Optional[List[RelationshipType]] = None
 
 

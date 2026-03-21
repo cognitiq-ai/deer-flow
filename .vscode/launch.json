@@ -8,11 +8,8 @@
             "program": "main_kg.py",
             "console": "integratedTerminal",
             "args": [
-                "--interactive",
-                "--debug-mode",
-                "rich",
-                "--enable-rich-output",
-                "--show-interactive"
+                "--enable-deep-thinking",
+                "--interactive"
             ],
             "env": {
                 "PYDEVD_WARN_EVALUATION_TIMEOUT": "300",

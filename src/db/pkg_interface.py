@@ -263,7 +263,7 @@ class PKGInterface:
                         id=existing_dict.get("id"),
                         source_node_id=rel_data.source_node_id,
                         target_node_id=rel_data.target_node_id,
-                        type=rel_type,
+                        type=RelationshipType[rel_type],
                         profile=existing_dict.get("profile"),
                         discovery_count=existing_dict.get("discovery_count", 0),
                         updated_at=existing_dict.get("updated_at", datetime.now()),
@@ -330,7 +330,7 @@ class PKGInterface:
             target_node_id=existing_rel.target_node_id,
             type=existing_rel.type,
             discovery_count=existing_rel.discovery_count,
-            profile=existing_rel.profile.model_copy(),
+            profile=existing_rel.profile.model_copy() if existing_rel.profile else None,
         )
 
         # Use the relationship's built-in merge method

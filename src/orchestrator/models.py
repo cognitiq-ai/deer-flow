@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GoalRequest(BaseModel):
@@ -294,6 +294,77 @@ class LearnerPersonalizationRequest(BaseModel):
         default=None,
         description="Optional session-local context (progress/notes).",
     )
+
+
+class KGSessionInput(BaseModel):
+    """Canonical KG session start/resume input contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    goal_string: Optional[str] = Field(
+        default=None,
+        description="Initial user message/goal used to start bootstrap.",
+    )
+    thread_id: str = Field(
+        default="__kg_default__",
+        description="Session thread id used for bootstrap interrupt resume.",
+    )
+    interrupt_feedback: Optional[str] = Field(
+        default=None,
+        description="If provided, resumes bootstrap from the latest interrupt.",
+    )
+    raw_topic_string: Optional[str] = Field(
+        default=None,
+        description="Optional topic hint.",
+    )
+    prior_knowledge_level: Optional[str] = Field(
+        default=None,
+        description="Optional prior knowledge level hint.",
+    )
+    preferences: Dict[str, Any] = Field(
+        default_factory=dict, description="Optional preference hints."
+    )
+    personalization: Optional[LearnerPersonalizationRequest] = Field(
+        default=None,
+        description="Optional pre-specified personalization contract.",
+    )
+    enable_deep_thinking: bool = Field(
+        default=False, description="Whether to use reasoning model path."
+    )
+
+    @model_validator(mode="after")
+    def validate_start_or_resume(self) -> "KGSessionInput":
+        if not self.interrupt_feedback and not self.goal_string:
+            raise ValueError(
+                "goal_string is required when interrupt_feedback is not provided."
+            )
+        return self
+
+
+class KGInterruptPayload(BaseModel):
+    """Interrupt payload for HITL resume."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    content: str
+
+
+class KGInterruptedResponse(BaseModel):
+    """Typed interrupt response from session orchestrator."""
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["INTERRUPTED"] = "INTERRUPTED"
+    thread_id: str
+    interrupt: KGInterruptPayload
+
+
+class KGBootstrapFailureResponse(BaseModel):
+    """Typed hard-failure response when bootstrap cannot finalize."""
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["FAILURE_BOOTSTRAP_REQUIRED"] = "FAILURE_BOOTSTRAP_REQUIRED"
+    thread_id: str
+    error: str
 
 
 class UserQueryContext(BaseModel):
