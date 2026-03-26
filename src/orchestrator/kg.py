@@ -11,6 +11,7 @@ from src.kg.base_models import (
     ConceptNodeStatus,
     Relationship,
     RelationshipType,
+    SessionDispositionState,
 )
 from src.kg.bootstrap.schemas import BootstrapContract
 from src.kg.builder import concept_research_graph, infer_relationship_graph
@@ -35,46 +36,38 @@ async def seed_awg_from_bootstrap(
         goal_name = bootstrap_contract.canonical_goal.normalized_goal_outcome
         session_log.log("INFO", f"Seeding AWG from bootstrap goal: {goal_name}")
 
-        goal_node = ConceptNode(
-            id=str(uuid.uuid4()),
-            name=goal_name,
-            node_type="goal",
-            updated_at=datetime.now(),
-        )
+        goal_node = ConceptNode(name=goal_name, node_type="goal")
         goal_node = pkg_interface.find_or_create_node(goal_node)
-        goal_node.exists_in_pkg = True
 
         awg = AgentWorkingGraph()
         awg.add_node(goal_node)
 
         seed_concepts: List[ConceptNode] = []
-        for concept_name in bootstrap_contract.selected_initial_focus_concepts:
-            concept_node = ConceptNode(
-                id=str(uuid.uuid4()),
-                name=concept_name,
-                topic=goal_name,
-                updated_at=datetime.now(),
+        for concept_name in bootstrap_contract.seed_concepts:
+            # Get the anchor concept
+            anchor_concept = next(
+                (
+                    anchor
+                    for anchor in bootstrap_contract.anchors.concept_anchors
+                    if anchor.name.lower() == concept_name.lower()
+                ),
+                None,
             )
-            concept_node = pkg_interface.find_or_create_node(concept_node)
-            concept_node.exists_in_pkg = True
+            if anchor_concept is None:
+                session_log.log("ERROR", f"Anchor concept not found for {concept_name}")
+                continue
+
+            concept_node = ConceptNode(
+                name=concept_name, summary=anchor_concept.definition
+            )
             awg.add_node(concept_node)
             seed_concepts.append(concept_node)
 
             fulfills_goal = Relationship(
-                id=str(uuid.uuid4()),
                 source_node_id=concept_node.id,
                 target_node_id=goal_node.id,
-                type=RelationshipType.FULFILS_GOAL,
-                updated_at=datetime.now(),
+                type=RelationshipType.FULFILLS_GOAL,
             )
-            try:
-                fulfills_goal = pkg_interface.find_or_create_relationship(fulfills_goal)
-            except Exception as rel_err:
-                session_log.log(
-                    "WARNING",
-                    f"Failed to persist FULFILS_GOAL relationship: {rel_err}",
-                    {"source": concept_node.name, "target": goal_node.name},
-                )
             awg.add_relationship(fulfills_goal)
 
         session_log.log(
@@ -99,6 +92,8 @@ async def inner_loop(
     session_log_data: Dict[str, Any],
     config_data: Dict[str, Any],
     personalization_request_data: Optional[Dict[str, Any]] = None,
+    intent_coverage_map_data: Optional[List[Dict[str, Any]]] = None,
+    personalization_overlay_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     KG3: Inner_Loop_Concept_Processor Celery task.
@@ -135,6 +130,7 @@ async def inner_loop(
             if personalization_request_data
             else None
         )
+        intent_coverage_map = intent_coverage_map_data or []
 
         # Step 1: Definition Research
         session_log.log(
@@ -154,6 +150,8 @@ async def inner_loop(
             awg_context=awg_context,
             research_mode="profile",
             personalization_request=personalization_request,
+            intent_coverage_map=intent_coverage_map,
+            personalization_overlay=personalization_overlay_data,
         )
 
         session_log.log("INFO", f"Starting research process for {c_focus.name}")
@@ -257,18 +255,31 @@ def awg_consolidator(
         concept_defined_data = extracted_info.get("concept_defined")
         if concept_defined_data:
             concept_defined = ConceptNode(**concept_defined_data)
-            defined_concepts.append(concept_defined)
-            processed_count += 1
+            if concept_defined.session_disposition == SessionDispositionState.PRUNED:
+                skipped_count += 1
+                session_log.log(
+                    "INFO",
+                    f"KG4: Skipping pruned concept during consolidation: {concept_defined.name}",
+                    {
+                        "concept_id": concept_defined.id,
+                        "session_disposition": getattr(
+                            concept_defined.session_disposition, "value", None
+                        ),
+                    },
+                )
+            else:
+                defined_concepts.append(concept_defined)
+                processed_count += 1
 
-            session_log.log(
-                "INFO",
-                f"KG4: Collected defined concept {concept_defined.name}",
-                {
-                    "concept_id": concept_defined.id,
-                    "definition_confidence": concept_defined.confidence,
-                    "status": concept_defined.status,
-                },
-            )
+                session_log.log(
+                    "INFO",
+                    f"KG4: Collected defined concept {concept_defined.name}",
+                    {
+                        "concept_id": concept_defined.id,
+                        "definition_confidence": concept_defined.confidence,
+                        "status": concept_defined.status,
+                    },
+                )
 
     session_log.log(
         "INFO",
@@ -426,19 +437,32 @@ def awg_consolidator(
     commit_nodes: set[ConceptNode] = set()
     commit_relationships: set[Relationship] = set()
     drop_nodes: set[ConceptNode] = set(duplicate_concepts)
+    pruned_ids = {
+        node.id
+        for node in consolidated_awg.nodes.values()
+        if node.session_disposition == SessionDispositionState.PRUNED
+    }
 
     # Add the defined concept nodes (post-consolidation)
     for concept in defined_concepts:
+        if concept.id in pruned_ids:
+            continue
         commit_nodes.add(concept)
 
         # Add relationships with target as defined concept
         for rel in consolidated_awg.get_relationships_by_target(concept.id):
+            if rel.source_node_id in pruned_ids or rel.target_node_id in pruned_ids:
+                continue
             commit_relationships.add(rel)
 
         # Add relationships with source as defined concept
         for rel in consolidated_awg.get_relationships_by_source(concept.id):
             # Exclude prerequisite relationships (to stubs)
-            if rel.type != RelationshipType.HAS_PREREQUISITE:
+            if (
+                rel.type != RelationshipType.HAS_PREREQUISITE
+                and rel.source_node_id not in pruned_ids
+                and rel.target_node_id not in pruned_ids
+            ):
                 commit_relationships.add(rel)
     # Preemptively resolve cycles within the AWG using confidence scores
     session_log.log(
@@ -540,6 +564,7 @@ def criteria_check(
     awg_current: AgentWorkingGraph,
     iteration_main_cycle: int,
     session_log: SessionLog,
+    config: Optional[Configuration] = None,
 ) -> Tuple[str, List[ConceptNode]]:
     """
     KG2: Criteria_Check_And_Next_Focus_Definition
@@ -566,7 +591,7 @@ def criteria_check(
     unresolved_stubs = []
     focus_concepts_output = []
 
-    config = Configuration()
+    config = config or Configuration()
 
     try:
         # Step 1: Verify GN_User_Current in AWG_Current
@@ -574,6 +599,25 @@ def criteria_check(
         if not goal_node_in_awg:
             session_log.log("ERROR", "KG2: Goal node not found in AWG")
             return "STOP_GOAL_UNRESOLVABLE", []
+
+        nodes = [
+            node
+            for node in awg_current.nodes.values()
+            if (
+                node.status != ConceptNodeStatus.STUB
+                and node.session_disposition != SessionDispositionState.PRUNED
+            )
+        ]
+        if len(nodes) >= config.max_awg_nodes_total:
+            session_log.log(
+                "INFO",
+                "KG2: AWG node budget reached, stopping research",
+                {
+                    "awg_nodes": len(awg_current.nodes),
+                    "max_awg_nodes_total": config.max_awg_nodes_total,
+                },
+            )
+            return "STOP_AWG_BUDGET", []
 
         if not goal_node_in_awg.definition:
             session_log.log(
@@ -591,19 +635,37 @@ def criteria_check(
         goal_dependency_roots = {
             rel.source_node_id
             for rel in awg_current.get_relationships_by_target(
-                goal_node_current.id, RelationshipType.FULFILS_GOAL
+                goal_node_current.id, RelationshipType.FULFILLS_GOAL
+            )
+            if (
+                getattr(
+                    awg_current.get_node(rel.source_node_id),
+                    "session_disposition",
+                    None,
+                )
+                != SessionDispositionState.PRUNED
             )
         }
         if not goal_dependency_roots:
             goal_dependency_roots = {goal_node_current.id}
+        pruned_ids = {
+            node.id
+            for node in awg_current.nodes.values()
+            if node.session_disposition == SessionDispositionState.PRUNED
+        }
 
         prerequisite_node_ids = []
         seen_prereq_ids = set()
         for root_id in goal_dependency_roots:
-            for prereq_id in awg_current.find_prerequisites_path(root_id):
+            for prereq_id in awg_current.find_prerequisites_path(
+                root_id, excluded_node_ids=pruned_ids
+            ):
                 if prereq_id not in seen_prereq_ids:
                     seen_prereq_ids.add(prereq_id)
                     prerequisite_node_ids.append(prereq_id)
+        path_strength_by_node = awg_current.prerequisite_path_strengths(
+            list(goal_dependency_roots), excluded_node_ids=pruned_ids
+        )
 
         session_log.log(
             "INFO",
@@ -628,9 +690,23 @@ def criteria_check(
                 or prereq_node.node_type == "goal"
             ):
                 continue
+            if prereq_node.session_disposition == SessionDispositionState.PRUNED:
+                continue
 
             # Check if prerequisite is unresolved
             if prereq_node.status == ConceptNodeStatus.STUB:
+                path_strength = path_strength_by_node.get(prereq_node.id, 0.0)
+                if path_strength < config.min_path_confidence_product:
+                    session_log.log(
+                        "INFO",
+                        f"KG2: Skipping weak-path prerequisite: {prereq_node.name}",
+                        {
+                            "prereq_id": prereq_id,
+                            "path_strength": path_strength,
+                            "min_path_confidence_product": config.min_path_confidence_product,
+                        },
+                    )
+                    continue
                 unresolved_stubs.append(prereq_node)
 
                 session_log.log(
@@ -640,6 +716,7 @@ def criteria_check(
                         "prereq_id": prereq_id,
                         "status": prereq_node.status,
                         "confidence": prereq_node.confidence,
+                        "path_strength": path_strength_by_node.get(prereq_node.id, 0.0),
                         "resolved": prereq_node.status
                         == ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE,
                     },
@@ -698,6 +775,8 @@ def criteria_check(
                 if not (
                     getattr(node, "id", None) == goal_node_current.id
                     or getattr(node, "node_type", "") == "goal"
+                    or getattr(node, "session_disposition", None)
+                    == SessionDispositionState.PRUNED
                 )
             ]
             sorted_candidates = sorted(

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import RunnableConfig
 
 from src.config.configuration import Configuration
+from src.kg.base_models import SessionDispositionState
 from src.kg.message_store import (
     MessageStore,
     curate_messages,
@@ -35,10 +36,6 @@ from src.llms.llm import get_llm_by_type
 from src.orchestrator.models import LearnerPersonalizationRequest
 
 
-def _norm(s: str) -> str:
-    return (s or "").strip().lower()
-
-
 def _dedupe_strs(values: Iterable[str]) -> List[str]:
     seen = set()
     out: List[str] = []
@@ -52,39 +49,6 @@ def _dedupe_strs(values: Iterable[str]) -> List[str]:
         seen.add(key)
         out.append(nv)
     return out
-
-
-def _concept_tokens(state: ConceptResearchState) -> set[str]:
-    name = _norm(getattr(state.concept, "name", ""))
-    topic = _norm(getattr(state.concept, "topic", ""))
-    tokens = set()
-    for part in [name, topic]:
-        for t in part.replace("/", " ").replace("_", " ").split():
-            if t:
-                tokens.add(t)
-    return tokens
-
-
-def _matches_scope_exclusion(
-    state: ConceptResearchState, exclusions: List[str]
-) -> Optional[str]:
-    """
-    Returns the matching exclusion string if the concept matches an exclusion via:
-    - exact normalized match against concept name/topic, or
-    - keyword match against concept name/topic tokens.
-    """
-    name = _norm(getattr(state.concept, "name", ""))
-    topic = _norm(getattr(state.concept, "topic", ""))
-    tokens = _concept_tokens(state)
-    for raw in exclusions or []:
-        ex = _norm(raw)
-        if not ex:
-            continue
-        if ex == name or ex == topic:
-            return raw
-        if ex in tokens:
-            return raw
-    return None
 
 
 def _default_overlay_for_request(
@@ -218,6 +182,9 @@ def personalization_fit(state: ConceptResearchState, config: RunnableConfig) -> 
         success_criteria_yaml=to_yaml(req.goal.success_criteria),
         scope_inclusions_yaml=to_yaml(req.goal.scope_inclusions),
         scope_exclusions_yaml=to_yaml(req.goal.scope_exclusions),
+        tooling_constraints_yaml=to_yaml(req.constraints.tooling_constraints),
+        accessibility_needs_yaml=to_yaml(req.constraints.accessibility_needs),
+        intent_coverage_map_yaml=to_yaml(state.intent_coverage_map),
     )
 
     curated_context = curate_messages(
@@ -243,14 +210,16 @@ def personalization_fit(state: ConceptResearchState, config: RunnableConfig) -> 
             rationale="Fallback fit decision due to LLM error.",
         )
 
-    # Hard constraint: scope exclusions force out-of-scope.
-    matched = _matches_scope_exclusion(state, req.goal.scope_exclusions)
-    if matched:
-        warnings.append(f"forced_out_of_scope_by_exclusion: {matched}")
+    # Deterministic enforcement from structured LLM adjudication only.
+    if fit.constraint_compliance == "violated":
+        warnings.append("forced_out_of_scope_by_constraint_violation")
         fit = fit.model_copy(
             update={
                 "in_scope": False,
-                "rationale": f"{fit.rationale} (Forced out-of-scope by exclusion: {matched})",
+                "rationale": (
+                    f"{fit.rationale} (Forced out-of-scope by constraint violation: "
+                    f"{fit.violated_constraints}.)"
+                ),
             }
         )
 
@@ -543,60 +512,14 @@ def personalization_prereq_policy(
 
     warnings = list(state.personalization_warnings or [])
 
-    # Hard constraints: out-of-scope => stop, and skip/recap non-blocking => stop.
-    if not overlay.fit.in_scope:
-        policy = overlay.prereq_policy.model_copy(
-            update={
-                "action": "stop",
-                "reason": "Forced stop because concept is out of scope.",
-            }
-        )
-        new_overlay = overlay.model_copy(update={"prereq_policy": policy})
-        messages = make_message_entry(
-            "personalization_prereq_policy",
-            "prereq_policy",
-            [
-                HumanMessage(
-                    content="Forced prereq_policy.action=stop because fit.in_scope is false."
-                ),
-                AIMessage(content=format_message("prereq_policy", to_yaml(policy))),
-            ],
-        )
-        return {
-            "messages": messages,
-            "personalization_overlay": new_overlay,
-            "personalization_warnings": warnings,
-        }
-
-    if overlay.mode.mode in ["skip", "recap"] and not overlay.fit.blocks_progress:
-        policy = overlay.prereq_policy.model_copy(
-            update={
-                "action": "stop",
-                "reason": "Stop prerequisite discovery: concept is non-blocking and is being skipped/recapped.",
-            }
-        )
-        new_overlay = overlay.model_copy(update={"prereq_policy": policy})
-        messages = make_message_entry(
-            "personalization_prereq_policy",
-            "prereq_policy",
-            [
-                HumanMessage(
-                    content="Mode is skip/recap and concept is non-blocking; stopping prereq discovery."
-                ),
-                AIMessage(content=format_message("prereq_policy", to_yaml(policy))),
-            ],
-        )
-        return {
-            "messages": messages,
-            "personalization_overlay": new_overlay,
-            "personalization_warnings": warnings,
-        }
-
     formatted = personalization_prereq_policy_instructions.format(
         fit_yaml=to_yaml(overlay.fit),
         mode_yaml=to_yaml(overlay.mode),
         scope_inclusions_yaml=to_yaml(req.goal.scope_inclusions),
         scope_exclusions_yaml=to_yaml(req.goal.scope_exclusions),
+        tooling_constraints_yaml=to_yaml(req.constraints.tooling_constraints),
+        accessibility_needs_yaml=to_yaml(req.constraints.accessibility_needs),
+        intent_coverage_map_yaml=to_yaml(state.intent_coverage_map),
         depth=req.preferences.depth,
     )
 
@@ -633,6 +556,60 @@ def personalization_prereq_policy(
             }
         )
 
+    # Hard constraint: saturated nodes from prior finalized merges stay stopped.
+    if getattr(overlay.prereq_policy, "novelty_saturated", False):
+        warnings.append("forced_prereq_policy_stop_novelty_saturated")
+        policy = policy.model_copy(
+            update={
+                "action": "stop",
+                "reason": (
+                    f"{policy.reason} (Forced stop: post-merge novelty_rate="
+                    f"{getattr(overlay.prereq_policy, 'novelty_rate', None)} indicates saturation.)"
+                ),
+            }
+        )
+
+    # Hard/priority guard from structured intent support adjudication.
+    if (
+        overlay.fit.supports_required_intents is False
+        and not overlay.fit.blocks_progress
+    ):
+        warnings.append("forced_prereq_policy_stop_intent_mismatch")
+        policy = policy.model_copy(
+            update={
+                "action": "stop",
+                "reason": (
+                    f"{policy.reason} (Forced stop: missing required intent facets "
+                    f"{overlay.fit.missing_required_facet_ids}.)"
+                ),
+            }
+        )
+
+    # Hard guard from structured constraint compliance adjudication.
+    if overlay.fit.constraint_compliance == "violated":
+        warnings.append("forced_prereq_policy_stop_constraint_violation")
+        policy = policy.model_copy(
+            update={
+                "action": "stop",
+                "reason": (
+                    f"{policy.reason} (Forced stop: constraint violations "
+                    f"{overlay.fit.violated_constraints}.)"
+                ),
+            }
+        )
+
+    if overlay.mode.mode in ["skip", "recap"] and not overlay.fit.blocks_progress:
+        warnings.append("forced_prereq_policy_stop_non_blocking_skip_or_recap")
+        policy = policy.model_copy(
+            update={
+                "action": "stop",
+                "reason": (
+                    f"{policy.reason} (Forced stop: concept is non-blocking and "
+                    "mode is skip/recap.)"
+                ),
+            }
+        )
+
     # Ensure limit invariants (schema also validates, but keep guardrails)
     if policy.action == "limit" and (
         policy.max_new_prereqs is None or policy.max_new_prereqs <= 0
@@ -645,6 +622,26 @@ def personalization_prereq_policy(
             }
         )
 
+    disposition_state = SessionDispositionState.ACTIVE
+
+    # Pruned: remove from this session's traversal/focus/content/commit.
+    if overlay.fit.constraint_compliance == "violated":
+        disposition_state = SessionDispositionState.PRUNED
+    elif not overlay.fit.in_scope and not overlay.fit.blocks_progress:
+        disposition_state = SessionDispositionState.PRUNED
+    elif (
+        overlay.fit.supports_required_intents is False
+        and not overlay.fit.blocks_progress
+    ):
+        disposition_state = SessionDispositionState.PRUNED
+    elif policy.action == "stop":
+        disposition_state = SessionDispositionState.STOP_EXPAND
+
+    concept = state.concept.model_copy(
+        update={"session_disposition": disposition_state}
+    )
+    awg_context = state.awg_context.deep_copy()
+    awg_context.merge_node(concept)
     new_overlay = overlay.model_copy(update={"prereq_policy": policy})
     messages = make_message_entry(
         "personalization_prereq_policy",
@@ -656,9 +653,32 @@ def personalization_prereq_policy(
     )
     return {
         "messages": messages,
+        "concept": concept,
+        "awg_context": awg_context,
         "personalization_overlay": new_overlay,
         "personalization_warnings": warnings,
     }
+
+
+def discard_pruned_concept(state: ConceptResearchState, config: RunnableConfig) -> dict:
+    """Terminal short-circuit node for pruned concepts."""
+    disposition = getattr(state.concept, "session_disposition", None)
+    messages = make_message_entry(
+        "discard_pruned_concept",
+        "session_disposition",
+        [
+            HumanMessage(
+                content="Short-circuit concept execution because session disposition is pruned."
+            ),
+            AIMessage(
+                content=format_message(
+                    "session_disposition",
+                    to_yaml({"state": getattr(disposition, "value", "pruned")}),
+                )
+            ),
+        ],
+    )
+    return {"messages": messages}
 
 
 def route_after_personalization_router(
@@ -679,9 +699,13 @@ def route_after_personalization_prereq_policy(
 ) -> str:
     """
     Conditional router after prereq_policy:
+    - disposition == pruned -> short-circuit to terminal discard node
     - action == stop -> jump directly to merge_prerequisites (ending prereq discovery)
     - otherwise -> proceed to initial_prerequisite_research
     """
+    disposition = getattr(state.concept, "session_disposition", None)
+    if disposition == SessionDispositionState.PRUNED:
+        return "discard_pruned_concept"
     overlay = getattr(state, "personalization_overlay", None)
     action = getattr(getattr(overlay, "prereq_policy", None), "action", None)
     if action == "stop":

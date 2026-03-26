@@ -10,7 +10,7 @@ After bootstrap completes, orchestrator converts the `BootstrapContract` into:
 
 1. a persisted goal node in PKG,
 2. persisted seed concept nodes,
-3. `FULFILS_GOAL` edges from each seed concept to the goal,
+3. `FULFILLS_GOAL` edges from each seed concept to the goal,
 4. an initial `AgentWorkingGraph` containing those nodes/edges,
 5. the first `focus_concepts_next_iteration` list.
 
@@ -33,7 +33,7 @@ After bootstrap completes, orchestrator converts the `BootstrapContract` into:
   - persists through `find_or_create_node`
   - appends to `seed_concepts`
 - For each seed concept:
-  - creates `RelationshipType.FULFILS_GOAL` relation to goal
+  - creates `RelationshipType.FULFILLS_GOAL` relation to goal
   - persists via `find_or_create_relationship` (warning/logged on failure)
   - adds relation to AWG regardless of relation persistence success path
 
@@ -63,7 +63,7 @@ After bootstrap completes, orchestrator converts the `BootstrapContract` into:
 - Current: duplicate or semantically equivalent seed names are not normalized at seeding time beyond underlying PKG ID checks; semantic dedup is mostly deferred to later consolidation logic.
 
 - Intended: edge persistence and AWG state remain tightly consistent.
-- Current: if `FULFILS_GOAL` relation persistence fails, the relation may still exist in AWG state for the current run, creating temporary AWG/PKG mismatch.
+- Current: if `FULFILLS_GOAL` relation persistence fails, the relation may still exist in AWG state for the current run, creating temporary AWG/PKG mismatch.
 
 - Intended: clear transactional commit for bootstrap seeding.
 - Current: node and relationship writes are sequential operations without a transaction boundary spanning all seed artifacts.

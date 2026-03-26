@@ -1,6 +1,6 @@
 # Bootstrap State Machine
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-26  
 Runtime path: interactive bootstrap phase inside `session_orchestrator`  
 Primary files: `src/kg/bootstrap/builder.py`, `src/kg/bootstrap/routing.py`, `src/kg/bootstrap/nodes.py`, `src/kg/bootstrap/schemas.py`
 
@@ -42,6 +42,7 @@ Bootstrap runs as a LangGraph state machine with an extract/ask loop and an expl
 - Maintains quality statuses per field (`accepted|ambiguous|missing`).
 - Computes `missing_fields` and `ready_to_lock`.
 - Deduplicates list fields with deterministic normalization (`_unique`).
+- Captures additional enforceable constraints (tooling/accessibility) for downstream policy checks.
 - On extraction failure, applies conservative fallback notes and minimum goal carry-forward behavior.
 
 #### `bootstrap_ask`
@@ -64,13 +65,14 @@ Bootstrap runs as a LangGraph state machine with an extract/ask loop and an expl
 #### `bootstrap_finalize_contract`
 
 - Builds/normalizes `LearnerPersonalizationRequest`.
-- Generates:
+- Uses one structured LLM synthesis call (`BootstrapFinalizeSynthesis`) to jointly produce:
   - `CanonicalGoal`
   - `AnchorSet`
   - `FeasibilityAssessment`
+  - `intent_coverage_map` (structured facets for downstream model-mediated checks)
 - Applies deterministic initial focus policy via `select_initial_focus_concepts(...)`.
 - Emits validated `BootstrapContract` with assumptions/warnings.
-- Includes fallback constructors for canonical goal, anchor set, and feasibility on LLM failure.
+- Includes defensive fallbacks for synthesis failure and empty synthesis sub-sections (notably anchors and intent facets).
 
 ## Evidence (Code References)
 
@@ -86,6 +88,8 @@ Bootstrap runs as a LangGraph state machine with an extract/ask loop and an expl
 - Output contract:
   - `src/kg/bootstrap/schemas.py::BootstrapContract`
   - `src/kg/bootstrap/schemas.py::BootstrapContract.validate_selected_focus_subset`
+  - `src/kg/bootstrap/schemas.py::BootstrapFinalizeSynthesis`
+  - `src/kg/bootstrap/prompts.py::bootstrap_finalize_synthesis_instructions`
 
 ## Data Contract (Final Output)
 
@@ -96,6 +100,7 @@ Bootstrap final state must include `bootstrap_contract` with:
 - `anchors`
 - `selected_initial_focus_concepts` (subset of `anchors.concept_anchors`)
 - `feasibility`
+- `intent_coverage_map` (structured facets, no keyword-heuristic fields)
 - `assumptions`
 - `bootstrap_warnings`
 
@@ -107,7 +112,7 @@ This contract is required by the orchestrator to continue.
 - Current: if user never proceeds after max rounds, routing can keep the flow at `bootstrap_proceed_gate` indefinitely (interactive deadlock by user choice, not by hard stop).
 
 - Intended: deterministic and robust contract completion.
-- Current: contract generation is robust via fallbacks, but quality can degrade silently when multiple LLM fallbacks are used; warnings are captured but downstream logic generally proceeds.
+- Current: contract generation is robust via single-call synthesis plus targeted fallbacks; quality can still degrade when synthesis fails or returns sparse sections, but warning notes are captured and downstream logic proceeds.
 
 - Intended: deep consistency between field extraction and personalization contract.
 - Current: extraction quality statuses are used for gating, but downstream policy enforcement mainly happens later in personalization/prerequisite nodes and is partial for some fields.

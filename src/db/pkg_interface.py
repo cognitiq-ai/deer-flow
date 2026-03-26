@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.db.neo4j_client import Neo4jClient
 from src.kg.agent_working_graph import AgentWorkingGraph
-from src.kg.base_models import ConceptNode, EvidenceAtom, Relationship, RelationshipType
+from src.kg.base_models import ConceptNode, Relationship, RelationshipType
 
 # Type alias for concept data
 ConceptData = Dict[str, Union[str, float, List[str], Dict[str, float]]]
@@ -47,7 +47,7 @@ class PKGInterface:
     def __init__(self, neo4j_client: Optional[Neo4jClient] = None):
         self.neo4j_client = neo4j_client or Neo4jClient()
 
-    def _parse_node_attributes(self, attributes: Any) -> Dict[str, Any]:
+    def _parse_attributes(self, attributes: Any) -> Dict[str, Any]:
         """Parse node attributes from Neo4j, handling JSON strings and empty values."""
 
         if not attributes:
@@ -71,14 +71,18 @@ class PKGInterface:
             if not node_data or not node_data.get("id"):
                 return None
 
+            profile_data = self._parse_attributes(node_data.get("profile"))
+            evaluation_data = self._parse_attributes(node_data.get("evaluation"))
+
             return ConceptNode(
                 id=node_data["id"],
                 name=node_data.get("name"),
                 topic=node_data.get("topic", ""),
-                profile=node_data.get("profile"),
-                evaluation=node_data.get("evaluation"),
+                profile=profile_data or None,
+                evaluation=evaluation_data or None,
                 node_type=node_data.get("node_type", "concept"),
-                exists_in_pkg=node_data.get("exists_in_pkg", False),
+                exists_in_pkg=True,
+                session_disposition=None,
                 updated_at=node_data.get("updated_at", datetime.fromtimestamp(0)),
                 name_embedding=node_data.get("name_embedding", []),
                 topic_embedding=node_data.get("topic_embedding", []),
@@ -86,6 +90,113 @@ class PKGInterface:
             )
         except (ValueError, TypeError):
             return None
+
+    def _parse_relationship_type(self, relationship_type: Any) -> RelationshipType:
+        """Parse relationship type values from Neo4j/model payload."""
+        if isinstance(relationship_type, RelationshipType):
+            return relationship_type
+
+        if isinstance(relationship_type, str):
+            try:
+                return RelationshipType[relationship_type]
+            except KeyError:
+                return RelationshipType(relationship_type)
+
+        raise ValueError(f"Unsupported relationship type: {relationship_type}")
+
+    def _create_relationship(self, rel_data: Any) -> Optional[Relationship]:
+        """Create a Relationship from parsed relation data."""
+        try:
+            if not rel_data:
+                return None
+
+            if (
+                not rel_data.get("id")
+                or not rel_data.get("source_node_id")
+                or not rel_data.get("target_node_id")
+            ):
+                return None
+
+            profile_data = self._parse_attributes(rel_data.get("profile"))
+            rel_type = self._parse_relationship_type(rel_data.get("type"))
+
+            updated_at = rel_data.get("updated_at", datetime.now())
+            if isinstance(updated_at, str):
+                try:
+                    updated_at = datetime.fromisoformat(updated_at)
+                except ValueError:
+                    updated_at = datetime.now()
+
+            return Relationship(
+                id=rel_data.get("id"),
+                source_node_id=rel_data.get("source_node_id"),
+                target_node_id=rel_data.get("target_node_id"),
+                type=rel_type,
+                discovery_count=rel_data.get("discovery_count", 0),
+                profile=profile_data or None,
+                updated_at=updated_at,
+            )
+        except (ValueError, TypeError):
+            return None
+
+    def _serialize_relationship_props(self, rel_data: Relationship) -> Dict[str, Any]:
+        """Serialize relationship fields for Neo4j persistence."""
+        rel_props = rel_data.model_dump()
+
+        # Persist nested objects as JSON strings for stable Neo4j storage.
+        rel_props["profile"] = json.dumps(rel_props.get("profile"))
+
+        if isinstance(rel_props.get("updated_at"), datetime):
+            rel_props["updated_at"] = rel_props["updated_at"].isoformat()
+
+        return rel_props
+
+    def _serialize_node_props(self, node_data: ConceptNode) -> Dict[str, Any]:
+        """Serialize ConceptNode fields for Neo4j persistence."""
+        node_props = node_data.model_dump()
+        # Runtime-only field; never persist session disposition in canonical PKG.
+        node_props.pop("session_disposition", None)
+
+        if isinstance(node_props.get("updated_at"), datetime):
+            node_props["updated_at"] = node_props["updated_at"].isoformat()
+
+        # Persist nested objects as JSON strings for stable Neo4j storage.
+        node_props["profile"] = json.dumps(node_props.get("profile"))
+        node_props["evaluation"] = json.dumps(node_props.get("evaluation"))
+
+        for embedding_field in [
+            "name_embedding",
+            "topic_embedding",
+            "definition_embedding",
+        ]:
+            if embedding_field not in node_props or node_props[embedding_field] is None:
+                node_props[embedding_field] = []
+
+        node_props["exists_in_pkg"] = True
+        return node_props
+
+    def _update_node(self, node_data: ConceptNode) -> ConceptNode:
+        """Update an existing node in Neo4j and return refreshed node."""
+        query = """
+        MATCH (n:Concept {id: $id})
+        SET n += $node_props
+        RETURN n
+        """
+
+        node_props = self._serialize_node_props(node_data)
+        with self.neo4j_client.driver.session() as session:
+            record = session.run(
+                query,
+                {"id": node_data.id, "node_props": node_props},
+            ).single()
+
+            if not record:
+                raise Exception("Failed to update node")
+
+            updated_node = self._create_concept_node(record["n"])
+            if not updated_node:
+                raise Exception("Failed to parse updated node")
+            return updated_node
 
     def get_node_by_id(self, node_id: str) -> Optional[ConceptNode]:
         """Get a node from Neo4j by ID."""
@@ -107,14 +218,14 @@ class PKGInterface:
             return None
 
     def find_or_create_node(self, node_data: ConceptNode) -> ConceptNode:
-        """Find or create a node in Neo4j."""
+        """Find or create a node in Neo4j (upsert semantics)."""
 
         # Check if node exists
         existing_node = self.get_node_by_id(node_data.id)
 
         if existing_node:
-            # Node exists, return it
-            return existing_node
+            # Node exists, update persisted fields (including profile/evaluation)
+            return self._update_node(node_data)
 
         # Node doesn't exist, create it
         query = """
@@ -123,27 +234,7 @@ class PKGInterface:
         """
 
         # Convert node data to properties dict
-        node_props = node_data.model_dump()
-
-        # Convert datetime to ISO format for Neo4j
-        if isinstance(node_props.get("updated_at"), datetime):
-            node_props["updated_at"] = node_props["updated_at"].isoformat()
-
-        # Convert profile/evaluation to JSON string for Neo4j
-        node_props["profile"] = json.dumps(node_props.get("profile"))
-        node_props["evaluation"] = json.dumps(node_props.get("evaluation"))
-
-        # Handle None embedding vectors by converting to empty lists
-        for embedding_field in [
-            "name_embedding",
-            "topic_embedding",
-            "definition_embedding",
-        ]:
-            if embedding_field not in node_props or node_props[embedding_field] is None:
-                node_props[embedding_field] = []
-
-        # Update node_data.exists_in_pkg to True
-        node_props["exists_in_pkg"] = True
+        node_props = self._serialize_node_props(node_data)
 
         with self.neo4j_client.driver.session() as session:
             record = session.run(query, {"node_props": node_props}).single()
@@ -151,8 +242,10 @@ class PKGInterface:
             if not record:
                 raise Exception("Failed to create node")
 
-            # Return the original node_data with ID
-            return node_data
+            created_node = self._create_concept_node(record["n"])
+            if not created_node:
+                raise Exception("Failed to parse created node")
+            return created_node
 
     def detect_relationship_cycle(
         self, source_id: str, target_id: str, relationship_type: RelationshipType
@@ -257,17 +350,17 @@ class PKGInterface:
                 if record:
                     # Relationship exists, merge the data
                     existing_dict = dict(record["r"].items())
+                    existing_dict["source_node_id"] = rel_data.source_node_id
+                    existing_dict["target_node_id"] = rel_data.target_node_id
+                    existing_dict["type"] = rel_type
+                    existing_dict["updated_at"] = existing_dict.get(
+                        "updated_at", datetime.now()
+                    )
 
                     # Create existing relationship object
-                    existing_rel = Relationship(
-                        id=existing_dict.get("id"),
-                        source_node_id=rel_data.source_node_id,
-                        target_node_id=rel_data.target_node_id,
-                        type=RelationshipType[rel_type],
-                        profile=existing_dict.get("profile"),
-                        discovery_count=existing_dict.get("discovery_count", 0),
-                        updated_at=existing_dict.get("updated_at", datetime.now()),
-                    )
+                    existing_rel = self._create_relationship(existing_dict)
+                    if not existing_rel:
+                        raise Exception("Failed to parse existing relationship")
 
                     # Merge new data into existing relationship
                     merged_rel = self._merge_relationships(existing_rel, rel_data)
@@ -278,19 +371,12 @@ class PKGInterface:
                     return merged_rel
 
                 # Relationship doesn't exist, create it
-                rel_props = rel_data.model_dump()
+                rel_props = self._serialize_relationship_props(rel_data)
 
                 # Remove source_node_id, target_node_id, and type from properties
                 rel_props.pop("source_node_id", None)
                 rel_props.pop("target_node_id", None)
                 rel_props.pop("type", None)
-
-                # Convert profile to JSON string for Neo4j
-                rel_props["profile"] = json.dumps(rel_props.get("profile"))
-
-                # Convert datetime to ISO format for Neo4j
-                if isinstance(rel_props.get("updated_at"), datetime):
-                    rel_props["updated_at"] = rel_props["updated_at"].isoformat()
 
                 create_query = f"""
                 MATCH (source:Concept {{id: $source_id}})
@@ -348,20 +434,13 @@ class PKGInterface:
         )
 
         # Prepare properties for update
-        rel_props = relationship.model_dump()
+        rel_props = self._serialize_relationship_props(relationship)
 
         # Remove fields that shouldn't be updated
         rel_props.pop("id", None)
         rel_props.pop("source_node_id", None)
         rel_props.pop("target_node_id", None)
         rel_props.pop("type", None)
-
-        # Convert profile to JSON string for Neo4j
-        rel_props["profile"] = json.dumps(rel_props.get("profile"))
-
-        # Convert datetime to ISO format for Neo4j
-        if isinstance(rel_props.get("updated_at"), datetime):
-            rel_props["updated_at"] = rel_props["updated_at"].isoformat()
 
         query = f"""
         MATCH (source:Concept {{id: $source_id}})-[r:{rel_type}]->(target:Concept {{id: $target_id}})
@@ -590,15 +669,19 @@ class PKGInterface:
                     for rel in path.relationships:
                         rel_id = rel.get("id")
                         if rel_id and rel_id not in working_graph.relationships:
-                            relationship = Relationship(
-                                id=rel_id,
-                                source_node_id=rel.start_node.get("id"),
-                                target_node_id=rel.end_node.get("id"),
-                                type=rel.type,
-                                discovery_count=rel.get("discovery_count", 0),
-                                profile=rel.get("profile"),
-                                updated_at=rel.get("updated_at", datetime.now()),
+                            relationship = self._create_relationship(
+                                {
+                                    "id": rel_id,
+                                    "source_node_id": rel.start_node.get("id"),
+                                    "target_node_id": rel.end_node.get("id"),
+                                    "type": rel.type,
+                                    "discovery_count": rel.get("discovery_count", 0),
+                                    "profile": rel.get("profile"),
+                                    "updated_at": rel.get("updated_at", datetime.now()),
+                                }
                             )
+                            if not relationship:
+                                continue
                             working_graph.add_relationship(relationship)
         except Exception:
             # Return empty graph on error
@@ -730,15 +813,19 @@ class PKGInterface:
 
                         rel_id = rel.get("id")
                         if rel_id and rel_id not in working_graph.relationships:
-                            relationship = Relationship(
-                                id=rel_id,
-                                source_node_id=source_node.get("id"),
-                                target_node_id=target_node.get("id"),
-                                type=RelationshipType[rel.type],
-                                discovery_count=rel.get("discovery_count", 0),
-                                profile=rel.get("profile"),
-                                updated_at=rel.get("updated_at", datetime.now()),
+                            relationship = self._create_relationship(
+                                {
+                                    "id": rel_id,
+                                    "source_node_id": source_node.get("id"),
+                                    "target_node_id": target_node.get("id"),
+                                    "type": rel.type,
+                                    "discovery_count": rel.get("discovery_count", 0),
+                                    "profile": rel.get("profile"),
+                                    "updated_at": rel.get("updated_at", datetime.now()),
+                                }
                             )
+                            if not relationship:
+                                continue
                             working_graph.add_relationship(relationship)
 
                     return working_graph

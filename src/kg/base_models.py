@@ -26,6 +26,14 @@ class ConceptNodeStatus(str, Enum):
     GOAL_FULFILLED = "goal_fulfilled"  # Goal is fulfilled
 
 
+class SessionDispositionState(str, Enum):
+    """Session-scoped disposition used to control graph expansion behavior."""
+
+    ACTIVE = "active"
+    STOP_EXPAND = "stop_expand"
+    PRUNED = "pruned"
+
+
 class RelationshipType(EnumDescriptor):
     """Type of relationship between concept nodes."""
 
@@ -36,9 +44,9 @@ class RelationshipType(EnumDescriptor):
         "Example: Solving quadratic equations HAS_PREREQUISITE completing the square. "
         "Structures learning order: ensures foundational knowledge is secured before tackling dependent concepts. Guides adaptive sequencing, remediation, and personalized study paths.",
     )
-    FULFILS_GOAL = EnumMember(
-        code="FULFILS_GOAL",
-        description="**Fulfillment (FULFILS_GOAL)**: A goal fulfillment relationship exists between the concepts. "
+    FULFILLS_GOAL = EnumMember(
+        code="FULFILLS_GOAL",
+        description="**Fulfillment (FULFILLS_GOAL)**: A goal fulfillment relationship exists between the concepts. "
         "A directed link A -> B means A fulfills the goal of B.",
     )
     IS_TYPE_OF = EnumMember(
@@ -81,6 +89,8 @@ class RelationshipType(EnumDescriptor):
             return False
         elif self == RelationshipType.IS_TYPE_OF:
             return True
+        elif self == RelationshipType.FULFILLS_GOAL:
+            return False
         else:
             return True
 
@@ -99,6 +109,9 @@ class ConceptNode(BaseModel):
     node_type: str = "concept"  # Default type
     exists_in_pkg: bool = False
     updated_at: datetime = Field(default_factory=datetime.now)
+    summary: Optional[str] = None
+    # Session-scoped, non-canonical control state. Must not be persisted to PKG.
+    session_disposition: Optional[SessionDispositionState] = None
 
     # Embedding vectors for vector search
     name_embedding: Optional[List[float]] = None
@@ -139,10 +152,10 @@ class ConceptNode(BaseModel):
     @property
     def status(self) -> ConceptNodeStatus:
         """Determine concept status based on definition and confidence."""
-        if not self.profile or self.confidence == 0.0:
-            return ConceptNodeStatus.STUB
-        else:
+        if self.profile or self.exists_in_pkg:
             return ConceptNodeStatus.DEFINED_HIGH_CONFIDENCE
+        else:
+            return ConceptNodeStatus.STUB
 
     @property
     def confidence(self) -> float:
@@ -158,9 +171,10 @@ class ConceptNode(BaseModel):
         """
         Return the definition of the concept.
         """
+        default = self.summary or ""
         if self.profile and self.profile.conceptualization:
-            return self.profile.conceptualization.definition
-        return ""
+            return self.profile.conceptualization.definition or default
+        return default
 
     def merge_node(self, node: "ConceptNode") -> None:
         """
@@ -175,16 +189,45 @@ class ConceptNode(BaseModel):
         # Merge information (taking higher confidence values, merging lists)
         if node.confidence > self.confidence:
             self.profile = node.profile
+            if node.definition_embedding is not None:
+                self.definition_embedding = node.definition_embedding
+            if node.evaluation is not None:
+                self.evaluation = node.evaluation
+            if node.summary is not None:
+                self.summary = node.summary
+            self.exists_in_pkg = self.exists_in_pkg or node.exists_in_pkg
+
+        # If current node has no profile/evaluation, hydrate from the incoming node.
+        if self.profile is None:
+            self.profile = node.profile
+        if self.evaluation is None:
+            self.evaluation = node.evaluation
+
+        # Only inherit missing embeddings from the incoming node when available.
+        if self.definition_embedding is None:
             self.definition_embedding = node.definition_embedding
 
         # Update timestamp
         self.updated_at = max(self.updated_at, node.updated_at)
 
+        # Merge session-scoped disposition with monotonic precedence.
+        # pruned > stop_expand > active > None
+        disposition_rank = {
+            None: -1,
+            SessionDispositionState.ACTIVE: 0,
+            SessionDispositionState.STOP_EXPAND: 1,
+            SessionDispositionState.PRUNED: 2,
+        }
+        if disposition_rank.get(node.session_disposition, -1) > disposition_rank.get(
+            self.session_disposition, -1
+        ):
+            self.session_disposition = node.session_disposition
+
     def with_goal(self, goal_context: str) -> str:
         """Get the research topic from the messages."""
         # Create the "concept" in "topic" to achieve "goal" string
         if self.name.lower() != goal_context.lower():
-            concept_definition = self.definition or ""
+            concept_definition = self.definition
             return f"**{self.name}:** {concept_definition}"
         if self.topic:
             return f"**{self.topic}** to {goal_context}"

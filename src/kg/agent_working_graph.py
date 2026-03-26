@@ -9,6 +9,7 @@ from src.kg.base_models import (
     ConceptNodeStatus,
     Relationship,
     RelationshipType,
+    SessionDispositionState,
 )
 
 try:
@@ -195,6 +196,7 @@ class AgentWorkingGraph(BaseModel):
                 node_id,
                 type=node.node_type,
                 status=node.status,
+                session_disposition=node.session_disposition,
                 weight=node.confidence,
             )
 
@@ -256,7 +258,7 @@ class AgentWorkingGraph(BaseModel):
         def get_edge_color(edge: Relationship) -> str:
             if edge.type == RelationshipType.HAS_PREREQUISITE:  # Red
                 return "#e74c3c"
-            if edge.type == RelationshipType.FULFILS_GOAL:  # Purple
+            if edge.type == RelationshipType.FULFILLS_GOAL:  # Purple
                 return "#9b59b6"
             if edge.type == RelationshipType.IS_TYPE_OF:  # Blue
                 return "#3498db"
@@ -318,6 +320,10 @@ class AgentWorkingGraph(BaseModel):
                 f"<b>{concept_node.name}</b>",
                 f"Topic: {concept_node.topic}" if concept_node.topic else "",
                 f"Status: {status_name}",
+                (
+                    "Disposition: "
+                    f"{getattr(concept_node.session_disposition, 'value', 'none')}"
+                ),
                 f"Confidence: {concept_node.confidence:.2f}",
                 f"Type: {concept_node.node_type.title()}",
             ]
@@ -338,7 +344,9 @@ class AgentWorkingGraph(BaseModel):
 
             else:
                 # Opacity by status
-                if concept_node.status == ConceptNodeStatus.STUB:
+                if concept_node.session_disposition == SessionDispositionState.PRUNED:
+                    node_data["opacity"] = 0.05
+                elif concept_node.status == ConceptNodeStatus.STUB:
                     node_data["opacity"] = 0.1
                 else:
                     node_data["opacity"] = 0.7
@@ -449,7 +457,9 @@ class AgentWorkingGraph(BaseModel):
         if fig:
             fig.export_html(filename)
 
-    def find_prerequisites_path(self, goal_node_id: str) -> List[str]:
+    def find_prerequisites_path(
+        self, goal_node_id: str, excluded_node_ids: Optional[set[str]] = None
+    ) -> List[str]:
         """
         Find all nodes that are prerequisites for the goal node.
 
@@ -467,6 +477,8 @@ class AgentWorkingGraph(BaseModel):
         # Get all nodes reachable from goal via HAS_PREREQUISITE relationships
         prerequisite_nodes = []
 
+        excluded = excluded_node_ids or set()
+
         # DFS to find all prerequisites
         def dfs_prerequisites(node_id: str, visited: set) -> None:
             if node_id in visited:
@@ -475,11 +487,58 @@ class AgentWorkingGraph(BaseModel):
 
             # Look for outgoing HAS_PREREQUISITE edges
             for _, target_id, edge_data in G.edges(node_id, data=True):
+                if target_id in excluded:
+                    continue
                 prerequisite_nodes.append(target_id)
                 dfs_prerequisites(target_id, visited)
 
         dfs_prerequisites(goal_node_id, set())
         return prerequisite_nodes
+
+    def prerequisite_path_strengths(
+        self, root_node_ids: List[str], excluded_node_ids: Optional[set[str]] = None
+    ) -> Dict[str, float]:
+        """
+        Compute max confidence-product path strength for prerequisites reachable
+        from the provided roots over HAS_PREREQUISITE edges.
+
+        Returns:
+            Mapping node_id -> max path strength in [0, 1].
+        """
+        strengths: Dict[str, float] = {}
+        excluded = excluded_node_ids or set()
+        adjacency: Dict[str, List[Relationship]] = {}
+        for rel in self.relationships.values():
+            if rel.type != RelationshipType.HAS_PREREQUISITE:
+                continue
+            if rel.source_node_id in excluded or rel.target_node_id in excluded:
+                continue
+            adjacency.setdefault(rel.source_node_id, []).append(rel)
+
+        def dfs(node_id: str, acc: float, visited: set[str]) -> None:
+            if node_id in visited:
+                return
+            visited.add(node_id)
+            for rel in adjacency.get(node_id, []):
+                edge_conf = float(getattr(rel, "confidence", 0.0) or 0.0)
+                # Keep a small floor so unknown confidences do not collapse paths.
+                edge_conf = max(min(edge_conf, 1.0), 0.1)
+                score = acc * edge_conf
+                target_id = rel.target_node_id
+                if target_id in excluded:
+                    continue
+                prev = strengths.get(target_id, 0.0)
+                if score > prev:
+                    strengths[target_id] = score
+                dfs(target_id, score, visited.copy())
+
+        for root_id in root_node_ids:
+            if root_id in excluded:
+                continue
+            if root_id in self.nodes:
+                strengths[root_id] = max(strengths.get(root_id, 0.0), 1.0)
+                dfs(root_id, 1.0, set())
+        return strengths
 
     def find_unresolved_stubs(
         self, confidence_threshold: float = 0.7
@@ -936,20 +995,46 @@ class AgentWorkingGraph(BaseModel):
         # Confirm DAG
         if not nx.is_directed_acyclic_graph(G):
             raise ValueError("Input must be a DAG")
-        # Get the goal node
-        goal = [node for node in self.nodes.values() if node.node_type == "goal"][0].id
+        # Get the goal node (if present)
+        goal_nodes = [node for node in self.nodes.values() if node.node_type == "goal"]
+        if not goal_nodes:
+            return []
+        goal = goal_nodes[0].id
         # Approach 1: Simple DFS postorder traversal
         # Remove all stubs from the graph
         rem = [
             node
             for node in G.nodes()
-            if G.nodes[node]["status"] == ConceptNodeStatus.STUB
+            if (
+                (
+                    G.nodes[node]["status"] == ConceptNodeStatus.STUB
+                    or G.nodes[node]["session_disposition"]
+                    == SessionDispositionState.PRUNED
+                )
+                and node != goal
+            )
         ]
-        # Remove all stubs and the goal node from the graph
+        # Remove all non-goal stubs from the graph.
         G.remove_nodes_from(rem)
-        # Do a DFS postorder traversal on the reversed graph
-        post = list(nx.dfs_postorder_nodes(G.reverse(), source=goal))
-        return list(map(lambda x: self.get_node(x).id, post))
+        # Do a DFS postorder traversal on the reversed graph.
+        # If goal was removed upstream or never materialized in the NetworkX graph,
+        # return a stable traversal over remaining sink-rooted components.
+        if goal not in G:
+            post = []
+            seen = set()
+            reversed_graph = G.reverse()
+            roots = [node for node in G.nodes() if G.out_degree(node) == 0] or list(
+                G.nodes()
+            )
+            for root in roots:
+                for node_id in nx.dfs_postorder_nodes(reversed_graph, source=root):
+                    if node_id not in seen:
+                        seen.add(node_id)
+                        post.append(node_id)
+        else:
+            post = list(nx.dfs_postorder_nodes(G.reverse(), source=goal))
+
+        return [node_id for node_id in post if self.get_node(node_id) is not None]
 
     def get_definitions(
         self,

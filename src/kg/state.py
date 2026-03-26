@@ -17,6 +17,7 @@ from typing_extensions import Annotated
 
 from src.kg.agent_working_graph import AgentWorkingGraph
 from src.kg.base_models import ConceptNode, Relationship, RelationshipType
+from src.kg.bootstrap.schemas import IntentFacet
 from src.kg.message_store import (
     MessageStore,
     make_message_entry,
@@ -74,6 +75,7 @@ class ConceptResearchState(BaseModel):
 
     # Personalization (session/goal/learner scoped; not persisted to ConceptNode)
     personalization_request: Optional[LearnerPersonalizationRequest] = None
+    intent_coverage_map: List[IntentFacet] = Field(default_factory=list)
     personalization_overlay: Optional[ConceptPersonalizationOverlay] = None
     personalization_warnings: List[str] = Field(default_factory=list)
 
@@ -278,6 +280,10 @@ class ConceptPrerequisiteState(BaseModel):
 
     # Previous state
     best_state: Optional["ConceptPrerequisiteState"] = None
+
+    # Finalized merge-time saturation metrics for this focus concept.
+    dedup_hits_last_merge: int = 0
+    new_stubs_last_merge: int = 0
 
     @computed_field(return_type=list[PrerequisiteProfile])
     @property

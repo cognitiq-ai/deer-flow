@@ -59,10 +59,13 @@ class Configuration:
     max_extract_urls = 2  # Maximum URLs to extract per iteration
     max_iter_until_extraction = 3  # Iterations before enabling content extraction
     min_confidence = 0.7  # Minimum confidence threshold for concept research
-    max_iteration_main = 3  # Maximum number of main iterations
+    max_iteration_main = 5  # Maximum number of main iterations
     max_focus_concepts = 5  # Maximum number of focus concepts per iter
     max_parallel_inner_loops = 5  # Maximum number of parallel inner loops
     max_research_depth = 100  # Maximum number of research depth
+    min_path_confidence_product = 0.5  # Structural path-strength floor
+    max_awg_nodes_total = 30  # Hard cap for total AWG nodes in a session
+    novelty_rate_min = 0.2  # Below this, mark concept saturated for prereq expansion
     max_bootstrap_rounds = 10  # Max extract-ask clarification rounds
     bootstrap_single_anchor_margin = 0.15  # Confidence gap for dominant single anchor
     bootstrap_dominant_confidence_threshold = (

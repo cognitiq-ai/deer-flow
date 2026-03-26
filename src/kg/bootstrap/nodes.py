@@ -10,10 +10,8 @@ from langgraph.types import interrupt
 from src.config.configuration import Configuration
 from src.kg.bootstrap.prompts import (
     RELATED_FIELDS,
-    bootstrap_anchor_ranking_instructions,
-    bootstrap_canonical_goal_instructions,
     bootstrap_extract_and_assess_instructions,
-    bootstrap_feasibility_instructions,
+    bootstrap_finalize_synthesis_instructions,
     bootstrap_question_planner_instructions,
 )
 from src.kg.bootstrap.schemas import (
@@ -22,21 +20,20 @@ from src.kg.bootstrap.schemas import (
     BootstrapAssumption,
     BootstrapContract,
     BootstrapExtractionDelta,
+    BootstrapFinalizeSynthesis,
     BootstrapWarning,
     CanonicalGoal,
     FeasibilityAssessment,
+    IntentFacet,
     QuestionPlan,
 )
 from src.kg.bootstrap.state import BootstrapCollectedData, BootstrapState
 from src.kg.utils import get_current_date, llm_with_retry, to_yaml
 from src.llms.llm import get_llm_by_type
 from src.orchestrator.models import (
-    AssessmentPreferencesRequest,
     GoalRequest,
     LearnerPersonalizationRequest,
     LearnerProfileRequest,
-    LearningConstraintsRequest,
-    LearningPreferencesRequest,
 )
 from src.prompts.kg.prompts import system_message_bootstrap
 
@@ -45,8 +42,13 @@ PRIORITY_P1_FIELDS: List[str] = [
     "prior_knowledge_level",
     "session_time_minutes",
     "scope_exclusions",
+    "tooling_constraints",
 ]
-PRIORITY_P2_FIELDS: List[str] = ["learning_style", "assessment_style"]
+PRIORITY_P2_FIELDS: List[str] = [
+    "learning_style",
+    "assessment_style",
+    "accessibility_needs",
+]
 
 BREADTH_INTENTS = {"outcome_project", "exam_prep", "remediation"}
 
@@ -273,6 +275,8 @@ def bootstrap_extract(state: BootstrapState, config) -> dict:
             "scope_inclusions": _unique(collected.scope_inclusions),
             "scope_exclusions": _unique(collected.scope_exclusions),
             "known_concepts": _unique(collected.known_concepts),
+            "tooling_constraints": _unique(collected.tooling_constraints),
+            "accessibility_needs": _unique(collected.accessibility_needs),
         }
     )
     missing_fields = compute_missing_fields(collected, field_quality_status)
@@ -333,7 +337,9 @@ def bootstrap_ask(state: BootstrapState, config) -> dict:
         f"- goal_outcome: {state.collected.goal_outcome or 'N/A'}\n"
         f"- prior_knowledge_level: {state.collected.prior_knowledge_level or 'N/A'}\n"
         f"- session_time_minutes: {state.collected.session_time_minutes or 'N/A'}\n"
-        f"- scope_exclusions: {', '.join(state.collected.scope_exclusions) or 'N/A'}"
+        f"- scope_exclusions: {', '.join(state.collected.scope_exclusions) or 'N/A'}\n"
+        f"- tooling_constraints: {', '.join(state.collected.tooling_constraints) or 'N/A'}\n"
+        f"- accessibility_needs: {', '.join(state.collected.accessibility_needs) or 'N/A'}"
     )
     if state.ready_to_lock:
         question += (
@@ -465,6 +471,10 @@ def _build_personalization_request(
             or existing.constraints.total_time_minutes,
             "session_time_minutes": collected.session_time_minutes
             or existing.constraints.session_time_minutes,
+            "tooling_constraints": collected.tooling_constraints
+            or existing.constraints.tooling_constraints,
+            "accessibility_needs": collected.accessibility_needs
+            or existing.constraints.accessibility_needs,
         }
     )
     preferences = existing.preferences.model_copy(
@@ -515,6 +525,61 @@ def _fallback_anchor_set(canonical_goal: CanonicalGoal) -> AnchorSet:
     )
 
 
+def _fallback_intent_coverage_map(
+    personalization: LearnerPersonalizationRequest,
+    selected_initial_focus: List[str],
+) -> List[IntentFacet]:
+    facets: List[IntentFacet] = []
+    idx = 1
+
+    for criterion in personalization.goal.success_criteria:
+        text = (criterion or "").strip()
+        if not text:
+            continue
+        facets.append(
+            IntentFacet(
+                facet_id=f"facet_success_{idx}",
+                facet_text=text,
+                required=True,
+                rationale="Fallback facet from success criteria.",
+                source_refs=[f"success_criteria[{idx - 1}]"],
+            )
+        )
+        idx += 1
+
+    for inclusion in personalization.goal.scope_inclusions:
+        text = (inclusion or "").strip()
+        if not text:
+            continue
+        facets.append(
+            IntentFacet(
+                facet_id=f"facet_scope_{idx}",
+                facet_text=text,
+                required=True,
+                rationale="Fallback facet from scope inclusions.",
+                source_refs=[f"scope_inclusions[{idx - 1}]"],
+            )
+        )
+        idx += 1
+
+    for anchor in selected_initial_focus:
+        text = (anchor or "").strip()
+        if not text:
+            continue
+        facets.append(
+            IntentFacet(
+                facet_id=f"facet_anchor_{idx}",
+                facet_text=text,
+                required=False,
+                rationale="Fallback facet from selected initial focus.",
+                source_refs=[f"selected_initial_focus[{idx - 1}]"],
+            )
+        )
+        idx += 1
+
+    return facets
+
+
 def bootstrap_finalize_contract(state: BootstrapState, config) -> dict:
     """Finalize and validate bootstrap contract once user chooses proceed."""
     configurable = Configuration.from_runnable_config(config)
@@ -525,53 +590,36 @@ def bootstrap_finalize_contract(state: BootstrapState, config) -> dict:
     assumption_notes = list(state.assumption_notes)
     personalization = _build_personalization_request(state, assumption_notes)
     collected_yaml = to_yaml(state.collected)
-
+    synthesis_failed = False
     try:
-        canonical_prompt = bootstrap_canonical_goal_instructions.format(
-            collected_yaml=collected_yaml
+        finalize_prompt = bootstrap_finalize_synthesis_instructions.format(
+            collected_yaml=collected_yaml,
+            personalization_yaml=to_yaml(personalization),
         )
-        canonical_goal = llm_with_retry(
+        synthesis = llm_with_retry(
             llm,
-            CanonicalGoal,
-            _bootstrap_messages(state, canonical_prompt, task_name="canonical_goal"),
+            BootstrapFinalizeSynthesis,
+            _bootstrap_messages(state, finalize_prompt, task_name="finalize_synthesis"),
         )
+        canonical_goal = synthesis.canonical_goal
+        anchors = synthesis.anchors
+        feasibility = synthesis.feasibility
+        intent_coverage_map = synthesis.intent_coverage_map
     except Exception as exc:  # pragma: no cover - defensive fallback
-        warning_notes.append(f"Canonical goal fallback used due to: {exc}")
+        synthesis_failed = True
+        warning_notes.append(f"Finalize synthesis fallback used due to: {exc}")
         canonical_goal = _fallback_canonical_goal(state.collected)
-
-    try:
-        anchor_prompt = bootstrap_anchor_ranking_instructions.format(
-            canonical_goal_yaml=to_yaml(canonical_goal),
-            collected_yaml=collected_yaml,
-        )
-        anchors = llm_with_retry(
-            llm,
-            AnchorSet,
-            _bootstrap_messages(state, anchor_prompt, task_name="anchor_ranking"),
-        )
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        warning_notes.append(f"Anchor fallback used due to: {exc}")
         anchors = _fallback_anchor_set(canonical_goal)
-
-    try:
-        feasibility_prompt = bootstrap_feasibility_instructions.format(
-            canonical_goal_yaml=to_yaml(canonical_goal),
-            collected_yaml=collected_yaml,
-        )
-        feasibility = llm_with_retry(
-            llm,
-            FeasibilityAssessment,
-            _bootstrap_messages(
-                state, feasibility_prompt, task_name="feasibility_assessment"
-            ),
-        )
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        warning_notes.append(f"Feasibility fallback used due to: {exc}")
         feasibility = FeasibilityAssessment(
             verdict="partially_feasible",
             blocking_reasons=[],
             tradeoff_summary="Fallback feasibility due to extraction uncertainty.",
         )
+        intent_coverage_map = []
+
+    if not anchors.concept_anchors:
+        warning_notes.append("Anchor fallback used due to empty concept anchors.")
+        anchors = _fallback_anchor_set(canonical_goal)
 
     selected_initial_focus = select_initial_focus_concepts(
         anchors=anchors,
@@ -588,6 +636,20 @@ def bootstrap_finalize_contract(state: BootstrapState, config) -> dict:
             "Selected top concept anchor because policy returned empty set."
         )
 
+    if not intent_coverage_map:
+        if synthesis_failed:
+            warning_notes.append(
+                "Intent facets fallback used due to synthesis fallback."
+            )
+        else:
+            warning_notes.append(
+                "Intent facets fallback used due to empty synthesis output."
+            )
+        intent_coverage_map = _fallback_intent_coverage_map(
+            personalization=personalization,
+            selected_initial_focus=selected_initial_focus,
+        )
+
     assumptions = [
         BootstrapAssumption(
             assumption=note,
@@ -602,8 +664,9 @@ def bootstrap_finalize_contract(state: BootstrapState, config) -> dict:
         personalization=personalization,
         canonical_goal=canonical_goal,
         anchors=anchors,
-        selected_initial_focus_concepts=selected_initial_focus,
+        seed_concepts=selected_initial_focus,
         feasibility=feasibility,
+        intent_coverage_map=intent_coverage_map,
         assumptions=assumptions,
         bootstrap_warnings=warnings,
     )

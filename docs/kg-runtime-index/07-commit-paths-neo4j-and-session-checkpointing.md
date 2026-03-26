@@ -36,13 +36,15 @@ No all-or-nothing transaction wraps the full batch at this level.
 ### Node write path
 
 - `find_or_create_node(node_data)`:
-  - read by id (`get_node_by_id`)
-  - if missing: `CREATE (n:Concept $node_props)`
+  - upsert by id (`get_node_by_id`):
+    - if node exists: `SET n += $node_props` (update persisted fields)
+    - if missing: `CREATE (n:Concept $node_props)`
   - serialization:
     - `updated_at` -> ISO string
     - `profile` and `evaluation` -> JSON string
     - embedding fields default to empty lists
     - persisted `exists_in_pkg=True`
+  - read path decodes JSON `profile`/`evaluation` when hydrating `ConceptNode` from Neo4j
 
 ### Relationship write path
 
@@ -50,11 +52,14 @@ No all-or-nothing transaction wraps the full batch at this level.
   - validates source/target node existence
   - cycle-checks directional types:
     - `HAS_PREREQUISITE`, `IS_TYPE_OF`, `IS_PART_OF`
-  - if same `(source,target,type)` exists:
-    - reconstruct existing relationship
-    - merge via `_merge_relationships`
-    - persist via `_update_relationship`
+  - serialization:
+    - `profile` -> JSON string on create/update
+  - upsert by matching `(source,target,type)`:
+    - existing relationship reconstruction uses `_create_relationship`
+    - decoding turns JSON `profile` into `RelationshipProfile`
+    - merged relationship persisted via `_update_relationship`
   - else create relationship with sanitized props
+  - reads in fetch paths (`fetch_subgraph`, vector search return-graph) also hydrate relationships through `_create_relationship`, so relationship profile decode is consistent for `Relationship` consumers
 
 ### Cycle rejection
 

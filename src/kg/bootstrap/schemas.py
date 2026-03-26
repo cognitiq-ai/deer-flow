@@ -94,6 +94,26 @@ class BootstrapExtractionDelta(BaseModel):
         default="missing",
         description="Status for session_time_minutes: accepted|ambiguous|missing.",
     )
+    tooling_constraints: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Hard tooling constraints to enforce (e.g., 'Python only', 'No Selenium')."
+        ),
+    )
+    tooling_constraints_status: Literal["accepted", "ambiguous", "missing"] = Field(
+        default="missing",
+        description="Status for tooling_constraints: accepted|ambiguous|missing.",
+    )
+    accessibility_needs: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Accessibility constraints (e.g., 'screen-reader friendly', 'no images')."
+        ),
+    )
+    accessibility_needs_status: Literal["accepted", "ambiguous", "missing"] = Field(
+        default="missing",
+        description="Status for accessibility_needs: accepted|ambiguous|missing.",
+    )
     learning_style: (
         Literal[
             "examples_first",
@@ -224,8 +244,14 @@ class AnchorCandidate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., description="Anchor concept/outcome/capability name.")
+    name: str = Field(
+        ..., description="Canonical anchor concept/outcome/capability name."
+    )
     rank: int = Field(..., ge=1, description="1-based rank among peers.")
+    definition: str = Field(
+        ...,
+        description="A detailed definition of the canonical anchor concept/outcome/capability.",
+    )
     confidence: float = Field(
         ...,
         ge=0.0,
@@ -281,6 +307,52 @@ class FeasibilityAssessment(BaseModel):
     )
 
 
+class IntentFacet(BaseModel):
+    """Enforceable learner-intent facet used for downstream gating."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    facet_id: str = Field(
+        ...,
+        description="Stable facet identifier (e.g. facet_success_1, facet_anchor_2).",
+    )
+    facet_text: str = Field(
+        ...,
+        description="Human-readable facet statement derived from bootstrap signals.",
+    )
+    required: bool = Field(
+        default=True,
+        description="Whether this facet is required for acceptable learning coverage.",
+    )
+    rationale: str = Field(
+        ...,
+        description="Brief rationale for why this facet is part of learner intent.",
+    )
+
+
+class BootstrapFinalizeSynthesis(BaseModel):
+    """Single-call synthesis output used by bootstrap finalization."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    canonical_goal: CanonicalGoal = Field(
+        ...,
+        description="Canonicalized goal and intent metadata.",
+    )
+    anchors: AnchorSet = Field(
+        ...,
+        description="Ranked anchor candidates for initial focus policy.",
+    )
+    feasibility: FeasibilityAssessment = Field(
+        ...,
+        description="Feasibility verdict and blocker/tradeoff notes.",
+    )
+    intent_coverage_map: List[IntentFacet] = Field(
+        default_factory=list,
+        description="Structured intent facets for downstream checks.",
+    )
+
+
 class BootstrapAssumption(BaseModel):
     """Assumption inferred during intake normalization."""
 
@@ -325,17 +397,24 @@ class BootstrapContract(BaseModel):
         ...,
         description="Ranked anchor candidates produced by bootstrap.",
     )
-    selected_initial_focus_concepts: List[str] = Field(
+    seed_concepts: List[str] = Field(
         ...,
         min_length=1,
         description=(
-            "Selected initial concept focus names for iteration 0; must be chosen "
+            "Seed concept names for iteration 0; must be chosen "
             "from anchors.concept_anchors."
         ),
     )
     feasibility: FeasibilityAssessment = Field(
         ...,
         description="Feasibility verdict and blockers/tradeoffs.",
+    )
+    intent_coverage_map: List[IntentFacet] = Field(
+        default_factory=list,
+        description=(
+            "Derived intent facets used as deterministic downstream guidance for "
+            "scope/relevance gating and prioritization."
+        ),
     )
     assumptions: List[BootstrapAssumption] = Field(
         default_factory=list,
@@ -350,9 +429,7 @@ class BootstrapContract(BaseModel):
     def validate_selected_focus_subset(self) -> "BootstrapContract":
         anchor_names = {anchor.name for anchor in self.anchors.concept_anchors}
         unknown_focus = [
-            concept
-            for concept in self.selected_initial_focus_concepts
-            if concept not in anchor_names
+            concept for concept in self.seed_concepts if concept not in anchor_names
         ]
         if unknown_focus:
             raise ValueError(

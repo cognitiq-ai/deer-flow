@@ -4,6 +4,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import RunnableConfig, Send
 
 from src.kg.personalization.nodes import (
+    discard_pruned_concept,
     personalization_assessment,
     personalization_delivery,
     personalization_fit,
@@ -72,6 +73,7 @@ def create_concept_research_graph():
     builder.add_node("personalization_delivery", personalization_delivery)
     builder.add_node("personalization_assessment", personalization_assessment)
     builder.add_node("personalization_prereq_policy", personalization_prereq_policy)
+    builder.add_node("discard_pruned_concept", discard_pruned_concept)
     builder.add_node("propose_prerequisites", propose_prerequisites)
     builder.add_node("evaluate_prerequisites", evaluate_prerequisites)
     builder.add_node("action_prerequisites", action_prerequisites)
@@ -121,8 +123,13 @@ def create_concept_research_graph():
     builder.add_conditional_edges(
         "personalization_prereq_policy",
         route_after_personalization_prereq_policy,
-        ["initial_prerequisite_research", "merge_prerequisites"],
+        [
+            "initial_prerequisite_research",
+            "merge_prerequisites",
+            "discard_pruned_concept",
+        ],
     )
+    builder.add_edge("discard_pruned_concept", END)
     builder.add_conditional_edges(
         "initial_prerequisite_research",
         route_after_action,

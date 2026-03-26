@@ -12,6 +12,7 @@ from langgraph.types import Command
 
 from src.config import Configuration
 from src.db.pkg_interface import PKGInterface
+from src.kg.base_models import ConceptNodeStatus, SessionDispositionState
 from src.kg.bootstrap.builder import build_bootstrap_graph_with_memory
 from src.kg.bootstrap.schemas import BootstrapContract
 from src.kg.bootstrap.state import BootstrapState
@@ -34,6 +35,29 @@ from src.orchestrator.models import (
 
 load_dotenv()
 bootstrap_graph_with_memory = build_bootstrap_graph_with_memory()
+
+
+def _derive_awg_node_budget(
+    default_budget: int, session_time_minutes: Optional[int], depth: str
+) -> int:
+    """Derive a time-aware AWG node budget with conservative defaults."""
+    if session_time_minutes is None:
+        budget = default_budget
+    elif session_time_minutes <= 30:
+        budget = 10
+    elif session_time_minutes <= 60:
+        budget = 15
+    elif session_time_minutes <= 120:
+        budget = 20
+    else:
+        budget = 25
+
+    depth_factor = 1.0
+    if depth == "overview":
+        depth_factor = 1.2
+    elif depth == "rigorous":
+        depth_factor = 0.8
+    return max(10, int(round(budget * depth_factor)))
 
 
 async def session_orchestrator(
@@ -64,7 +88,7 @@ async def session_orchestrator(
 
     # Get the configuration
     config = Configuration()
-    # Session-scoped personalization overlays (not persisted to ConceptNode / PKG)
+    # Session-scoped personalization overlays (for content shaping only).
     overlays_by_concept_id: Dict[str, Dict[str, Any]] = {}
 
     try:
@@ -171,6 +195,12 @@ async def session_orchestrator(
             if isinstance(bootstrap_contract_data, BootstrapContract)
             else BootstrapContract(**bootstrap_contract_data)
         )
+        # Apply a time-aware AWG cap derived from learner constraints/preferences.
+        config.max_awg_nodes_total = _derive_awg_node_budget(
+            default_budget=config.max_awg_nodes_total,
+            session_time_minutes=bootstrap_contract.personalization.constraints.session_time_minutes,
+            depth=bootstrap_contract.personalization.preferences.depth,
+        )
 
         (
             identified_goal,
@@ -192,9 +222,21 @@ async def session_orchestrator(
         gn_user_session = identified_goal
         awg_session = initial_awg
         focus_concepts_next_iteration = seed_focus_concepts
-        decision_criteria = (
-            "CONTINUE_RESEARCH" if focus_concepts_next_iteration else "STOP_ERROR"
-        )
+        nodes = [
+            node
+            for node in awg_session.nodes.values()
+            if (
+                node.status != ConceptNodeStatus.STUB
+                and node.session_disposition != SessionDispositionState.PRUNED
+            )
+        ]
+        if len(nodes) >= config.max_awg_nodes_total:
+            decision_criteria = "STOP_AWG_BUDGET"
+            focus_concepts_next_iteration = []
+        else:
+            decision_criteria = (
+                "CONTINUE_RESEARCH" if focus_concepts_next_iteration else "STOP_ERROR"
+            )
 
         session_log_global.log(
             "INFO",
@@ -205,6 +247,7 @@ async def session_orchestrator(
                 "initial_awg_relationships": len(awg_session.relationships),
                 "initial_focus_concepts": len(focus_concepts_next_iteration),
                 "bootstrap_goal": bootstrap_contract.canonical_goal.normalized_goal_outcome,
+                "max_awg_nodes_total": config.max_awg_nodes_total,
             },
         )
 
@@ -262,6 +305,13 @@ async def session_orchestrator(
                             "awg_context_data": awg_session.model_dump(),
                             "session_log_data": {"logs": session_log_global.logs},
                             "personalization_request_data": bootstrap_contract.personalization.model_dump(),
+                            "intent_coverage_map_data": [
+                                facet.model_dump()
+                                for facet in bootstrap_contract.intent_coverage_map
+                            ],
+                            "personalization_overlay_data": overlays_by_concept_id.get(
+                                concept.id
+                            ),
                         }
 
                         # Submit KG3 inner loop processor (try Celery, fallback to direct call)
@@ -275,6 +325,12 @@ async def session_orchestrator(
                                 config_data=config.__dict__,
                                 personalization_request_data=task_data[
                                     "personalization_request_data"
+                                ],
+                                intent_coverage_map_data=task_data[
+                                    "intent_coverage_map_data"
+                                ],
+                                personalization_overlay_data=task_data[
+                                    "personalization_overlay_data"
                                 ],
                             )
                         except AttributeError:
@@ -296,6 +352,12 @@ async def session_orchestrator(
                                 config_data=config.__dict__,
                                 personalization_request_data=task_data[
                                     "personalization_request_data"
+                                ],
+                                intent_coverage_map_data=task_data[
+                                    "intent_coverage_map_data"
+                                ],
+                                personalization_overlay_data=task_data[
+                                    "personalization_overlay_data"
                                 ],
                             )
                             task = DirectTaskResult(result)
@@ -400,6 +462,7 @@ async def session_orchestrator(
                         awg_session,
                         iteration_main_current,
                         session_log_global,
+                        config=config,
                     )
                 )
 
@@ -427,6 +490,9 @@ async def session_orchestrator(
             order_nodes = True
         elif decision_criteria == "STOP_MAX_ITERATIONS":
             overall_session_status = "PARTIAL_MAX_ITERATIONS"
+            order_nodes = True
+        elif decision_criteria == "STOP_AWG_BUDGET":
+            overall_session_status = "PARTIAL_AWG_BUDGET"
             order_nodes = True
         elif decision_criteria == "STOP_ERROR":
             overall_session_status = "FAILURE_ERROR"
@@ -460,7 +526,12 @@ async def session_orchestrator(
             for node_id in ordered_nodes:
                 overlay = overlays_by_concept_id.get(node_id)
                 mode = (overlay or {}).get("mode", {}).get("mode")
-                if mode == "skip":
+                node = awg_session.get_node(node_id)
+                if (
+                    mode == "skip"
+                    or getattr(node, "session_disposition", None)
+                    == SessionDispositionState.PRUNED
+                ):
                     continue
                 filtered_ordered_nodes.append(node_id)
 

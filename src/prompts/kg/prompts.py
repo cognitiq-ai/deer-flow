@@ -82,6 +82,7 @@ Use missing when no reliable signal exists.
 - Prioritize one primary field; include up to two related fields only if helpful.
 - Prefer concrete examples and measurable wording.
 - Avoid generic study advice and avoid repeating already confirmed details.
+- Prioritize enforceable constraints (scope/tooling/accessibility/time) over vague preferences.
 </clarification_policy>
 
 <safety_and_quality>

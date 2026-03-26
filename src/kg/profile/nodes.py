@@ -153,7 +153,9 @@ def evaluate_profile(state: ConceptResearchState, config: RunnableConfig) -> dic
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
     formatted_eval = concept_profile_evaluation_instructions.format(
-        research_concept=state.concept.with_goal(state.goal_context)
+        research_concept=state.concept.with_goal(state.goal_context),
+        goal_context=state.goal_context,
+        intent_coverage_map_yaml=to_yaml(state.intent_coverage_map),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(

@@ -1,6 +1,6 @@
 # Inner Loop: Profile, Personalization, Prerequisites
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-22  
 Runtime path: KG3 per-concept processing  
 Primary files: `src/orchestrator/kg.py`, `src/kg/builder.py`, `src/kg/profile/nodes.py`, `src/kg/research/nodes.py`, `src/kg/relationships/nodes.py`, `src/kg/personalization/nodes.py`, `src/kg/prerequisites/nodes.py`, `src/kg/state.py`
 
@@ -47,6 +47,7 @@ Graph definition lives in `src/kg/builder.py::create_concept_research_graph`.
      - `personalization_assessment`
      - `personalization_prereq_policy`
 10. `route_after_personalization_prereq_policy`
+   - disposition `pruned` -> `discard_pruned_concept` -> `END`
    - action `stop` -> `merge_prerequisites`
    - else -> `initial_prerequisite_research`
 
@@ -85,6 +86,7 @@ Graph definition lives in `src/kg/builder.py::create_concept_research_graph`.
   - `personalization/nodes.py::personalization_delivery`
   - `personalization/nodes.py::personalization_assessment`
   - `personalization/nodes.py::personalization_prereq_policy`
+  - `personalization/nodes.py::discard_pruned_concept`
   - `personalization/nodes.py::route_after_personalization_prereq_policy`
 
 Hard constraints implemented in code include:
@@ -93,6 +95,10 @@ Hard constraints implemented in code include:
 - out-of-scope concepts forced mode `skip`
 - out-of-scope concepts forced prereq policy `stop`
 - skip/recap + non-blocking can short-circuit prerequisite expansion
+- required-intent-facet mismatch (from bootstrap `intent_coverage_map`) can force prereq policy `stop` for non-blocking concepts
+- previously saturated concepts (`novelty_saturated`) are forced to keep prereq policy `stop` on future visits
+- intent/constraint checks are enforced from structured LLM adjudication fields (no lexical keyword matching)
+- per-concept `ConceptNode.session_disposition` (`active`|`stop_expand`|`pruned`) is set in personalization and controls downstream routing/selection
 
 ### Step 6: Prerequisite discovery
 
@@ -108,6 +114,7 @@ Hard constraints implemented in code include:
   - `prerequisites_completed`
 - AWG merge:
   - `merge_prerequisites` creates `HAS_PREREQUISITE` edges and new stubs as needed
+  - post-merge computes dedup/novelty (`dedup_rate`, `novelty_rate`) and marks saturation for future local expansion control
 
 ## Inner Loop Output Contract
 
@@ -134,7 +141,7 @@ On exception, returns `{}`.
 - Current: `relationships/nodes.py::get_related_concepts` uses `state.definition` embedding search and broad exception fallback to empty results; relation discovery can be silently skipped.
 
 - Intended: personalization controls all downstream prerequisite behavior.
-- Current: strong controls are implemented, but enforcement is localized to policy branches; some preference fields remain advisory rather than strict constraints.
+- Current: strong controls are implemented with deterministic post-check corrections driven by structured LLM outputs (scope/constraints, relevance hard gate, intent facets, and novelty saturation), while softer preference fields remain advisory.
 
 ## Plausible Failure Modes (High-Level)
 

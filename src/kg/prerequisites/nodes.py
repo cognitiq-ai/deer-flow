@@ -55,42 +55,9 @@ from src.kg.utils import format_message, llm_with_retry, to_yaml
 from src.llms.llm import get_llm_by_type
 
 
-def _norm(s: str) -> str:
-    return (s or "").strip().lower()
-
-
-def _tokens(s: str) -> set[str]:
-    return {t for t in _norm(s).replace("/", " ").replace("_", " ").split() if t}
-
-
 def _get_prereq_policy(state: ConceptResearchState):
     overlay = getattr(state, "personalization_overlay", None)
     return getattr(overlay, "prereq_policy", None)
-
-
-def _get_scope_controls(state: ConceptResearchState) -> tuple[list[str], list[str]]:
-    req = getattr(state, "personalization_request", None)
-    goal = getattr(req, "goal", None)
-    inclusions = list(getattr(goal, "scope_inclusions", []) or [])
-    exclusions = list(getattr(goal, "scope_exclusions", []) or [])
-    return inclusions, exclusions
-
-
-def _matches_scope_term(name: str, scope_terms: list[str]) -> Optional[str]:
-    """
-    Conservative scope match:
-    - exact normalized match OR
-    - keyword match against name tokens.
-    """
-    n = _norm(name)
-    toks = _tokens(name)
-    for term in scope_terms or []:
-        t = _norm(term)
-        if not t:
-            continue
-        if t == n or t in toks:
-            return term
-    return None
 
 
 def _apply_prereq_personalization_policy(
@@ -106,20 +73,6 @@ def _apply_prereq_personalization_policy(
     if policy is None:
         return prerequisite_state
 
-    inclusions, exclusions = _get_scope_controls(state)
-    respect_excl = bool(getattr(policy, "respect_scope_exclusions", False))
-    prefer_incl = bool(getattr(policy, "prefer_scope_inclusions", False))
-
-    # Filter canonical candidates by exclusions (applies to both existing and discovered).
-    if respect_excl and exclusions and prerequisite_state.canonical:
-        filtered = {}
-        for key, profile in prerequisite_state.canonical.items():
-            concept_name = getattr(getattr(profile, "concept", None), "name", "")
-            if _matches_scope_term(concept_name, exclusions):
-                continue
-            filtered[key] = profile
-        prerequisite_state.canonical = filtered
-
     # Enforce max_new_prereqs when limiting (only for discovered canonical prerequisites).
     if getattr(policy, "action", None) == "limit":
         max_new = int(getattr(policy, "max_new_prereqs", 0) or 0)
@@ -132,18 +85,14 @@ def _apply_prereq_personalization_policy(
             concept = getattr(profile, "concept", None)
             source = getattr(concept, "source", None)
             if source == "discovered":
-                name = getattr(concept, "name", "")
                 conf = float(getattr(concept, "confidence", 0.0) or 0.0)
-                in_inclusion = bool(
-                    prefer_incl and _matches_scope_term(name, inclusions)
-                )
-                discovered_items.append((in_inclusion, conf, key, profile))
+                discovered_items.append((conf, key, profile))
             else:
                 keep[key] = profile
 
-        # Prefer inclusions first (True before False), then confidence.
-        discovered_items.sort(key=lambda t: (t[0], t[1]), reverse=True)
-        for _, _, key, profile in discovered_items[:max_new]:
+        # Confidence-only ordering; upstream LLM policy decides semantic preferences.
+        discovered_items.sort(key=lambda t: t[0], reverse=True)
+        for _, key, profile in discovered_items[:max_new]:
             keep[key] = profile
 
         prerequisite_state.canonical = keep
@@ -1080,6 +1029,7 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
     """
     LangGraph node that merges accepted prerequisite candidates into the AWG.
     """
+    configurable = Configuration.from_runnable_config(config)
     awg_context = state.awg_context.deep_copy()
 
     # Get prerequisite state and its accepted candidates
@@ -1087,10 +1037,14 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
     if prereq_state is None or not prereq_state.accepted:
         return {}
 
+    dedup_hits = 0
+    new_stubs = 0
+
     # Merge all accepted candidates as HAS_PREREQUISITE relationships
     for profile in prereq_state.accepted:
         # Check if existing prerequisite
         if isinstance(profile.concept, ConceptNode):
+            dedup_hits += 1
             continue
 
         # Get any existing node
@@ -1104,11 +1058,13 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
             )
             if not target_id:
                 continue
+            dedup_hits += 1
         # Create new stub node
         else:
             prereq_node = ConceptNode(name=profile.concept.name)
             awg_context.add_node(prereq_node)
             target_id = prereq_node.id
+            new_stubs += 1
 
         # Create the relationship
         prereq_rel = Relationship(
@@ -1121,6 +1077,36 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
         )
         awg_context.add_relationship(prereq_rel)
 
+    denom = dedup_hits + new_stubs
+    dedup_rate = (dedup_hits / denom) if denom else 0.0
+    novelty_rate = 1.0 - dedup_rate if denom else 1.0
+    novelty_saturated = novelty_rate < configurable.novelty_rate_min
+
+    prereq_state.dedup_hits_last_merge = dedup_hits
+    prereq_state.new_stubs_last_merge = new_stubs
+
+    overlay = getattr(state, "personalization_overlay", None)
+    warnings = list(getattr(state, "personalization_warnings", []) or [])
+    if overlay is not None:
+        reason = overlay.prereq_policy.reason
+        if novelty_saturated:
+            reason = (
+                f"{reason} (Post-merge saturation: novelty_rate={novelty_rate:.2f} "
+                f"below novelty_rate_min={configurable.novelty_rate_min:.2f}.)"
+            )
+            warnings.append("novelty_saturation_post_merge")
+        policy = overlay.prereq_policy.model_copy(
+            update={
+                "novelty_saturated": novelty_saturated,
+                "novelty_rate": novelty_rate,
+                "reason": reason,
+            }
+        )
+        overlay = overlay.model_copy(update={"prereq_policy": policy})
+
     return {
         "awg_context": awg_context,
+        "prerequisites": prereq_state,
+        "personalization_overlay": overlay,
+        "personalization_warnings": warnings,
     }

@@ -25,6 +25,8 @@ class BootstrapCollectedData(BaseModel):
     known_concepts: List[str] = Field(default_factory=list)
     total_time_minutes: Optional[int] = None
     session_time_minutes: Optional[int] = None
+    tooling_constraints: List[str] = Field(default_factory=list)
+    accessibility_needs: List[str] = Field(default_factory=list)
     learning_style: Optional[
         Literal[
             "examples_first",

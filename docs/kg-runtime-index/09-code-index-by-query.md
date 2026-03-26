@@ -1,6 +1,6 @@
 # Code Index by Query
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-26  
 Purpose: retrieval index for human reviewers
 
 Use this as the first stop when you have a specific runtime question.
@@ -33,6 +33,7 @@ Use this as the first stop when you have a specific runtime question.
 - `src/kg/bootstrap/schemas.py::CanonicalGoal`
 - `src/kg/bootstrap/schemas.py::AnchorSet`
 - `src/kg/bootstrap/schemas.py::FeasibilityAssessment`
+- `src/kg/bootstrap/schemas.py::IntentFacet`
 
 ### "How are seed concepts created from bootstrap?"
 
@@ -43,9 +44,32 @@ Use this as the first stop when you have a specific runtime question.
 ### "How are current focus concepts chosen each iteration?"
 
 - `src/orchestrator/kg.py::criteria_check`
-- `src/kg/base_models.py::RelationshipType.FULFILS_GOAL` (goal-fulfilling roots for prerequisite traversal)
+- `src/kg/base_models.py::RelationshipType.FULFILLS_GOAL` (goal-fulfilling roots for prerequisite traversal)
 - `src/kg/agent_working_graph.py::find_prerequisites_path`
-- `src/config/configuration.py::Configuration` (`max_focus_concepts`, `max_iteration_main`)
+- `src/kg/agent_working_graph.py::prerequisite_path_strengths`
+- `src/config/configuration.py::Configuration` (`max_focus_concepts`, `max_iteration_main`, `min_path_confidence_product`, `max_awg_nodes_total`)
+
+### "Where is intent coverage mapped and enforced?"
+
+- `src/kg/bootstrap/nodes.py::bootstrap_finalize_contract`
+- `src/kg/bootstrap/schemas.py::BootstrapFinalizeSynthesis`
+- `src/kg/bootstrap/schemas.py::IntentFacet`
+- `src/kg/bootstrap/prompts.py::bootstrap_finalize_synthesis_instructions`
+- `src/kg/personalization/nodes.py::personalization_prereq_policy`
+
+### "Where is personalization disposition/relevance enforcement?"
+
+- `src/kg/base_models.py::ConceptNode.session_disposition`
+- `src/kg/personalization/schemas.py::ConceptPersonalizationOverlay`
+- `src/kg/personalization/nodes.py::personalization_prereq_policy`
+- `src/kg/personalization/nodes.py::discard_pruned_concept`
+- `src/kg/personalization/nodes.py::route_after_personalization_prereq_policy`
+- `src/orchestrator/kg.py::criteria_check`
+
+### "Where is novelty saturation computed?"
+
+- `src/kg/prerequisites/nodes.py::merge_prerequisites`
+- `src/kg/personalization/schemas.py::PrereqPolicy` (`novelty_saturated`, `novelty_rate`, `dedup_rate`)
 
 ### "Where is initial profile research defined?"
 

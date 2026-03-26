@@ -21,6 +21,8 @@ and for EACH field provide a quality status: accepted | ambiguous | missing.
 - goal_outcome accepted only if it expresses a concrete ability/outcome and domain/topic.
 - success_criteria accepted only if at least one observable/measurable check exists.
 - scope_exclusions accepted only if exclusions are concrete constraints, not vague wording.
+- tooling_constraints accepted only if they are enforceable constraints (e.g., "No Selenium", "Python only").
+- accessibility_needs accepted only when they are concrete delivery constraints.
 
 ### Quality semantics
 - accepted: concrete and actionable for lock-in.
@@ -34,13 +36,18 @@ and for EACH field provide a quality status: accepted | ambiguous | missing.
 """
 
 
-bootstrap_canonical_goal_instructions = """## Bootstrap Canonical Goal
+bootstrap_finalize_synthesis_instructions = """## Bootstrap Finalize Synthesis
 
-Create a canonical goal from collected intake.
+Produce a single coherent bootstrap synthesis from collected intake and normalized
+personalization request.
 
 <collected_yaml>
 {collected_yaml}
 </collected_yaml>
+
+<personalization_yaml>
+{personalization_yaml}
+</personalization_yaml>
 
 ### Intent guidance
 - concept_learning: learner asks to understand a concept/topic.
@@ -49,41 +56,17 @@ Create a canonical goal from collected intake.
 - remediation: learner asks to fix weaknesses/gaps.
 - constrained_learning: strong constraints dominate execution.
 
-### Output protocol
-- Output JSON only.
-"""
-
-
-bootstrap_anchor_ranking_instructions = """## Bootstrap Anchor Ranking
-
-Propose ranked anchors for initial concept focus.
-
-<canonical_goal_yaml>
-{canonical_goal_yaml}
-</canonical_goal_yaml>
-
-<collected_yaml>
-{collected_yaml}
-</collected_yaml>
-
-### Output protocol
-- Output JSON only.
+### Anchor guidance
 - Return 3-5 concept anchors unless context is too sparse.
 - Confidence values must be between 0 and 1.
-"""
+- Keep ranks 1-based and ordered by confidence.
+- Provide a complete definition of each selected anchor concept. Do not truncate or ellipsize the definition.
 
-
-bootstrap_feasibility_instructions = """## Bootstrap Feasibility
-
-Assess feasibility using collected constraints and goal.
-
-<canonical_goal_yaml>
-{canonical_goal_yaml}
-</canonical_goal_yaml>
-
-<collected_yaml>
-{collected_yaml}
-</collected_yaml>
+### Intent facets guidance
+- Create concise facet statements that represent concrete learning intent.
+- Mark required facets explicitly (`required=true`) for must-satisfy outcomes/constraints.
+- Use stable facet ids.
+- Include rationale and source references where possible.
 
 ### Output protocol
 - Output JSON only.
@@ -120,6 +103,7 @@ Use language and examples relevant to the user's goal context.
 - Optionally include up to two related fields.
 - Provide 1-2 good examples and 1-2 bad examples tied to this topic.
 - Keep concise and friendly.
+- Bias questions toward enforceable constraints and measurable success checks.
 
 ### Output protocol
 - Output JSON only.
@@ -131,6 +115,8 @@ RELATED_FIELDS: Dict[str, List[str]] = {
     "prior_knowledge_level": ["known_concepts"],
     "session_time_minutes": ["total_time_minutes"],
     "scope_exclusions": ["scope_inclusions"],
+    "tooling_constraints": ["scope_exclusions"],
+    "accessibility_needs": ["tooling_constraints"],
     "learning_style": ["depth"],
     "assessment_style": ["practice_ratio"],
 }

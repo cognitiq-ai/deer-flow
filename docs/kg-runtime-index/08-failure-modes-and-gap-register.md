@@ -1,6 +1,6 @@
 # Failure Modes and Gap Register
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-22  
 Runtime path: end-to-end interactive KG run  
 Primary files: `main_kg.py`, `src/orchestrator/session.py`, `src/orchestrator/kg.py`, `src/kg/*`, `src/db/pkg_interface.py`
 
@@ -14,12 +14,12 @@ This module is the explicit intended-vs-current register. It is split into:
 
 | Step | Intended flow | Current implementation state | Evidence symbols |
 |---|---|---|---|
-| 1 Bootstrap Q&A | bounded clarification with controlled exit | round-bounded extract/ask exists, but proceed gate can loop indefinitely until user chooses proceed | `bootstrap_extract`, `bootstrap_ask`, `bootstrap_proceed_gate`, routing functions |
+| 1 Bootstrap Q&A | bounded clarification with controlled exit | round-bounded extract/ask exists, now with stronger enforceable constraint elicitation; proceed gate can still loop indefinitely until user chooses proceed | `bootstrap_extract`, `bootstrap_ask`, `bootstrap_proceed_gate`, routing functions |
 | 2 Seed concepts | deterministic anchor -> seed concept realization | works; semantic dedup mostly deferred to later consolidation | `seed_awg_from_bootstrap` |
-| 3 Identify focus | next best current concepts globally | current selection is prerequisite-path-centric from goal-fulfilling roots; off-path unresolved concepts ignored | `criteria_check`, `find_prerequisites_path` |
-| 4 Initial profile research | robust profile with explicit confidence gates | profile loop exists and confidence-gated; evidence depth depends on search/crawl reliability | `initial_profile_research`, `propose_profile`, `evaluate_profile`, `profile_completed` |
+| 3 Identify focus | next best current concepts globally | selection remains prerequisite-path-centric, now with structural path-strength filtering and AWG hard budget stop | `criteria_check`, `find_prerequisites_path`, `prerequisite_path_strengths` |
+| 4 Initial profile research | robust profile with explicit confidence gates | profile loop exists with canonical quality/evidence/confidence gates; goal relevance moved to personalization overlays | `initial_profile_research`, `propose_profile`, `evaluate_profile`, `profile_completed` |
 | 5 Personalization | strict learner constraints propagation | strong per-node overlays exist; some fields are still advisory and not globally enforced | personalization node chain in `personalization/nodes.py` |
-| 6 Prerequisite discovery | controlled expansion under personalization constraints | policy-aware filtering/limits implemented; quality depends on iterative LLM loops and caps | `propose_prerequisites`, `evaluate_prerequisites`, `action_prerequisites`, `merge_prerequisites` |
+| 6 Prerequisite discovery | controlled expansion under personalization constraints | policy-aware filtering/limits implemented, now with post-merge novelty saturation to stop future local expansion | `propose_prerequisites`, `evaluate_prerequisites`, `action_prerequisites`, `merge_prerequisites` |
 | 7 AWG consolidation | semantic dedup + relationship quality control | exact-name stub dedup + inferred-duplicate merge + cycle pruning; alias handling is limited in first pass | `awg_consolidator`, `merge_concepts`, `resolve_cycles` |
 | 8 Commit (KG + session) | durable KG commit + durable checkpoint/session | KG durable via Neo4j; bootstrap checkpoint in-memory only; session summary returned, not durably stored in this path | `commit_changes`, `build_bootstrap_graph_with_memory`, `_generate_session_summary` |
 | 9 Repeat 3-8 | iterate until convergence with progress checks | repeat loop exists; low default max iteration (3) can halt before convergence | `session_orchestrator` main while loop, `Configuration.max_iteration_main` |
@@ -36,7 +36,7 @@ This module is the explicit intended-vs-current register. It is split into:
 ### Focus selection and stopping
 
 - `src/orchestrator/kg.py::criteria_check`
-  - Gap: prioritization scope is path-limited to prerequisite traversals anchored by `FULFILS_GOAL` concepts.
+  - Gap: prioritization scope is path-limited to prerequisite traversals anchored by `FULFILLS_GOAL` concepts; path-strength thresholds require careful tuning to avoid over-pruning.
 
 ### Inner-loop pipeline
 
@@ -85,6 +85,7 @@ This module is the explicit intended-vs-current register. It is split into:
 - Search/crawl exceptions reduce evidence depth.
 - LLM schema failures trigger fallbacks and warning accumulation.
 - Per-concept failure returns `{}` and removes concept from consolidation input.
+- Aggressive personalization fit/intent/saturation gates can stop useful expansion if configured too strictly.
 
 ### 4. Consolidation
 

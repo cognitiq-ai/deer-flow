@@ -1,6 +1,6 @@
 # Interactive KG Runtime Index
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-22  
 Runtime path: `main_kg.py --interactive`  
 Primary entrypoint: `main_kg.py`
 
@@ -30,6 +30,16 @@ This directory is a living, code-accurate documentation index for the interactiv
 - Step 7 (AWG consolidation) -> `06-awg-consolidation-dedup-and-relationship-inference.md`
 - Step 8 (Commit: KG + session/checkpoint) -> `07-commit-paths-neo4j-and-session-checkpointing.md`
 - Step 9 (Repeat 3-8) -> `04-main-loop-focus-selection.md` + links to `05/06/07`
+
+## Control Surface Update (2026-03-22)
+
+The runtime now includes stronger expansion controls:
+
+- Bootstrap now captures more enforceable constraints and emits an `intent_coverage_map`.
+- Profile evaluation is canonical-only; relevance/disposition enforcement is now personalization-scoped.
+- Focus selection includes structural path-strength filtering (`min_path_confidence_product`).
+- Session loop includes a hard AWG node budget (`max_awg_nodes_total`) with time-aware defaults.
+- Prerequisite merge computes post-finalization novelty/dedup saturation and carries it forward to stop future local expansion.
 
 ## Documentation Conventions
 

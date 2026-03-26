@@ -25,10 +25,21 @@ You will decide whether the current concept should be studied for the learner's 
 {scope_exclusions_yaml}
 </scope_exclusions>
 
+<constraint_controls>
+tooling_constraints: {tooling_constraints_yaml}
+accessibility_needs: {accessibility_needs_yaml}
+</constraint_controls>
+
+<intent_coverage_map_yaml>
+{intent_coverage_map_yaml}
+</intent_coverage_map_yaml>
+
 ### Decision rubric
 - **In-scope test**: if the concept clearly falls under scope exclusions, mark `in_scope=false`.
 - **Goal relevance**: high if directly supports success criteria; medium if supportive; low if tangential.
 - **Blocks progress**: true if lacking this would prevent satisfying any success criteria (not just make it harder).
+- Assess required intent facet support and return missing required facet ids.
+- Assess constraint compliance and return compliance verdict + violated constraints.
 
 ### Output protocol
 - Output **JSON only** (no prose/markdown).
@@ -145,6 +156,15 @@ scope_inclusions: {scope_inclusions_yaml}
 scope_exclusions: {scope_exclusions_yaml}
 </scope_controls>
 
+<constraint_controls>
+tooling_constraints: {tooling_constraints_yaml}
+accessibility_needs: {accessibility_needs_yaml}
+</constraint_controls>
+
+<intent_coverage_map_yaml>
+{intent_coverage_map_yaml}
+</intent_coverage_map_yaml>
+
 <depth_preference>
 depth: {depth}
 </depth_preference>
@@ -153,6 +173,7 @@ depth: {depth}
 - If `fit.in_scope` is false: action must be `stop`.
 - Expand only if the concept blocks progress AND depth is not overview.
 - Stop if expansion would push into exclusions or low relevance.
+- Stop if the concept does not support any required intent facet unless it clearly blocks progress.
 - If action is `limit`, max_new_prereqs must be present and >0.
 
 ### Output protocol

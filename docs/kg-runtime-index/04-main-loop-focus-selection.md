@@ -1,6 +1,6 @@
 # Main Loop and Focus Selection
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-22  
 Runtime path: KG1/KG2 in orchestrator  
 Primary files: `src/orchestrator/session.py`, `src/orchestrator/kg.py`, `src/config/configuration.py`, `src/kg/agent_working_graph.py`
 
@@ -26,6 +26,8 @@ Default config (`Configuration`):
 - `max_iteration_main = 3`
 - `max_parallel_inner_loops = 5`
 - `max_focus_concepts = 5`
+- `max_awg_nodes_total = 60` (time-aware override can be applied from bootstrap constraints)
+- `min_path_confidence_product = 0.08`
 
 ### Per-Iteration Execution
 
@@ -50,16 +52,18 @@ Default config (`Configuration`):
 
 1. Validate goal node is present in AWG.
 2. Build prerequisite roots:
-   - gather source concepts from `FULFILS_GOAL` edges targeting the goal
+   - gather source concepts from `FULFILLS_GOAL` edges targeting the goal
    - fallback to `goal_id` when no fulfilling concepts are present
 3. Traverse prerequisite paths from each root:
    - `awg_current.find_prerequisites_path(root_id)`
 4. Collect unresolved stubs:
    - `status == STUB`
    - skip goal nodes
+   - skip weak structural branches where path-strength (confidence-product from goal roots) is below `min_path_confidence_product`
 5. Stopping decisions:
    - no unresolved -> `STOP_PREREQUISITES_MET`
    - iteration limit reached -> `STOP_MAX_ITERATIONS`
+   - AWG node count at/above cap -> `STOP_AWG_BUDGET`
 6. If continuing:
    - prioritize candidates by tuple:
      - has some definition
@@ -75,6 +79,7 @@ Default config (`Configuration`):
   - `src/orchestrator/kg.py::criteria_check`
 - Prerequisite path traversal:
   - `src/kg/agent_working_graph.py::find_prerequisites_path`
+  - `src/kg/agent_working_graph.py::prerequisite_path_strengths`
 - Config bounds:
   - `src/config/configuration.py::Configuration`
 
@@ -92,7 +97,7 @@ Default config (`Configuration`):
 - Current: Celery fallback behavior is local and silent (except logs), so runtime characteristics differ across environments.
 
 - Intended: stable iteration budgets for complex goals.
-- Current: low default `max_iteration_main=3` can terminate before convergence for broad goals.
+- Current: iteration budget still matters, but hard AWG node cap and path-strength filtering now limit tangential expansion earlier.
 
 ## Plausible Failure Modes (High-Level)
 
@@ -100,6 +105,7 @@ Default config (`Configuration`):
 - Criteria failures force `STOP_ERROR`.
 - Missing goal node in AWG leads to stop decision (`STOP_GOAL_UNRESOLVABLE`).
 - High fan-out goals with limited `max_focus_concepts` can starve lower-priority concepts.
+- Overly conservative path-strength threshold can suppress legitimately useful low-confidence branches.
 
 ## Related Modules
 

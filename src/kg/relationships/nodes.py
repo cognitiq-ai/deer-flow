@@ -25,7 +25,17 @@ def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) ->
     # Generate embedding for definition and search PKG for related concepts
     try:
         embeddings = get_embedding_model()
-        definition_embedding = embeddings.embed_query(state.definition)
+        concept = state.concept
+        if not concept.definition_embedding:
+            definition_embedding = embeddings.embed_query(concept.definition)
+        concept = concept.model_copy(
+            update={
+                "definition_embedding": definition_embedding,
+                "profile": state.profile.concept,
+                "evaluation": state.profile.evaluation,
+            }
+        )
+
         pkg_interface = PKGInterface()
         relevant_subgraph = pkg_interface.vector_search_definition(
             definition_embedding,
@@ -34,19 +44,19 @@ def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) ->
         )
         # Get related concepts from PKG
         related_concepts = [
-            InferRelationshipState(
-                concept_a=state.profile.concept, concept_b=concept.profile
-            )
-            for concept in list(relevant_subgraph.nodes.values())
+            InferRelationshipState(concept_a=concept, concept_b=concept_)
+            for concept_ in list(relevant_subgraph.nodes.values())
             if concept.profile and state.profile
         ]
 
         return {
+            "concept": concept,
             "related_concepts": related_concepts,
         }
 
     except Exception as e:
         return {
+            "concept": state.concept,
             "related_concepts": [],
         }
 
@@ -161,13 +171,12 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
     # Prepare working variables
     awg_context = state.awg_context
     pkg_interface = PKGInterface()
-    concept_defined = ConceptNode(
-        id=state.concept.id or str(uuid.uuid4()),
-        name=state.concept.name,
-        node_type=state.concept.node_type,
-        profile=state.profile.concept,
-        evaluation=state.profile.evaluation,
-        updated_at=datetime.now(),
+    concept_defined = state.concept.model_copy(
+        update={
+            "updated_at": datetime.now(),
+            "profile": state.profile.concept,
+            "evaluation": state.profile.evaluation,
+        }
     )
     # Ensure the defined concept exists in AWG
     awg_context.add_node(concept_defined)

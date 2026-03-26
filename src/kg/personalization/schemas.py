@@ -30,6 +30,22 @@ class FitDecision(BaseModel):
         default=None,
         description="Optional flag for conflicts (e.g., excluded but blocking).",
     )
+    supports_required_intents: Optional[bool] = Field(
+        default=None,
+        description="Whether required intent facets are supported by this concept.",
+    )
+    missing_required_facet_ids: List[str] = Field(
+        default_factory=list,
+        description="Required facet IDs not supported by this concept.",
+    )
+    constraint_compliance: Literal["compliant", "uncertain", "violated"] = Field(
+        default="uncertain",
+        description="Constraint compliance assessment for this concept.",
+    )
+    violated_constraints: List[str] = Field(
+        default_factory=list,
+        description="Constraint references violated by this concept.",
+    )
 
     @model_validator(mode="after")
     def fill_conflict_default(self) -> "FitDecision":
@@ -161,6 +177,18 @@ class PrereqPolicy(BaseModel):
         default=None,
         ge=0,
         description="Optional cap for extracted URLs in prerequisite discovery for this concept.",
+    )
+    novelty_saturated: bool = Field(
+        default=False,
+        description=(
+            "Whether finalized prerequisite merges indicate saturation for this concept."
+        ),
+    )
+    novelty_rate: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Finalized post-merge novelty rate for this concept, if available.",
     )
 
     @model_validator(mode="after")
