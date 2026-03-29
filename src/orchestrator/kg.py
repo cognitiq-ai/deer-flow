@@ -10,6 +10,7 @@ from src.kg.base_models import (
     ConceptNode,
     ConceptNodeStatus,
     Relationship,
+    RelationshipProfile,
     RelationshipType,
     SessionDispositionState,
 )
@@ -67,6 +68,11 @@ async def seed_awg_from_bootstrap(
                 source_node_id=concept_node.id,
                 target_node_id=goal_node.id,
                 type=RelationshipType.FULFILLS_GOAL,
+                profile=RelationshipProfile(
+                    rationale="Bootstrap-derived seed confidence",
+                    confidence=anchor_concept.confidence,
+                    sources=[],
+                ),
             )
             awg.add_relationship(fulfills_goal)
 
@@ -588,7 +594,6 @@ def criteria_check(
         {"goal_node": goal_node_current.name, "goal_id": goal_node_current.id},
     )
 
-    unresolved_stubs = []
     focus_concepts_output = []
 
     config = config or Configuration()
@@ -600,7 +605,7 @@ def criteria_check(
             session_log.log("ERROR", "KG2: Goal node not found in AWG")
             return "STOP_GOAL_UNRESOLVABLE", []
 
-        nodes = [
+        resolved_active_nodes = [
             node
             for node in awg_current.nodes.values()
             if (
@@ -608,13 +613,29 @@ def criteria_check(
                 and node.session_disposition != SessionDispositionState.PRUNED
             )
         ]
-        if len(nodes) >= config.max_awg_nodes_total:
+        if len(resolved_active_nodes) >= config.max_awg_nodes_total:
             session_log.log(
                 "INFO",
                 "KG2: AWG node budget reached, stopping research",
                 {
                     "awg_nodes": len(awg_current.nodes),
+                    "resolved_active_nodes": len(resolved_active_nodes),
                     "max_awg_nodes_total": config.max_awg_nodes_total,
+                },
+            )
+            return "STOP_AWG_BUDGET", []
+        remaining_awg_node_budget = max(
+            config.max_awg_nodes_total - len(resolved_active_nodes), 0
+        )
+        n_nodes = min(config.max_focus_concepts, remaining_awg_node_budget)
+        if n_nodes <= 0:
+            session_log.log(
+                "INFO",
+                "KG2: No node budget available for next focus selection",
+                {
+                    "remaining_awg_node_budget": remaining_awg_node_budget,
+                    "max_focus_concepts": config.max_focus_concepts,
+                    "selection_budget": n_nodes,
                 },
             )
             return "STOP_AWG_BUDGET", []
@@ -632,22 +653,32 @@ def criteria_check(
 
         # Step 2: Trace prerequisite paths from concepts that fulfill the goal.
         # If no goal fulfillers are present, fallback to goal-anchored traversal.
-        goal_dependency_roots = {
-            rel.source_node_id
-            for rel in awg_current.get_relationships_by_target(
-                goal_node_current.id, RelationshipType.FULFILLS_GOAL
-            )
+        goal_dependency_root_strengths = {}
+        for rel in awg_current.get_relationships_by_target(
+            goal_node_current.id, RelationshipType.FULFILLS_GOAL
+        ):
             if (
                 getattr(
                     awg_current.get_node(rel.source_node_id),
                     "session_disposition",
                     None,
                 )
-                != SessionDispositionState.PRUNED
+                == SessionDispositionState.PRUNED
+            ):
+                continue
+            rel_confidence = rel.confidence
+            if rel_confidence <= 0:
+                rel_confidence = 1.0
+            goal_dependency_root_strengths[rel.source_node_id] = max(
+                goal_dependency_root_strengths.get(rel.source_node_id, 0.0),
+                rel_confidence,
             )
-        }
-        if not goal_dependency_roots:
+        if not goal_dependency_root_strengths:
             goal_dependency_roots = {goal_node_current.id}
+            root_strengths = {goal_node_current.id: 1.0}
+        else:
+            goal_dependency_roots = set(goal_dependency_root_strengths.keys())
+            root_strengths = goal_dependency_root_strengths
         pruned_ids = {
             node.id
             for node in awg_current.nodes.values()
@@ -664,7 +695,9 @@ def criteria_check(
                     seen_prereq_ids.add(prereq_id)
                     prerequisite_node_ids.append(prereq_id)
         path_strength_by_node = awg_current.prerequisite_path_strengths(
-            list(goal_dependency_roots), excluded_node_ids=pruned_ids
+            list(goal_dependency_roots),
+            excluded_node_ids=pruned_ids,
+            root_node_strengths=root_strengths,
         )
 
         session_log.log(
@@ -677,7 +710,8 @@ def criteria_check(
             },  # Log first 5 for brevity
         )
 
-        # Step 3: Check each prerequisite for resolution status
+        # Step 3: Identify unresolved stubs that pass path-strength gate.
+        unresolved_stub_by_id: Dict[str, ConceptNode] = {}
         for prereq_id in prerequisite_node_ids:
             prereq_node = awg_current.get_node(prereq_id)
             if not prereq_node:
@@ -707,7 +741,7 @@ def criteria_check(
                         },
                     )
                     continue
-                unresolved_stubs.append(prereq_node)
+                unresolved_stub_by_id[prereq_node.id] = prereq_node
 
                 session_log.log(
                     "INFO",
@@ -724,15 +758,15 @@ def criteria_check(
 
         session_log.log(
             "INFO",
-            f"KG2: Total unresolved concepts found: {len(unresolved_stubs)}",
-            {"unresolved_count": len(unresolved_stubs)},
+            f"KG2: Total unresolved concepts found: {len(unresolved_stub_by_id)}",
+            {"unresolved_count": len(unresolved_stub_by_id)},
         )
 
         # Step 4: Make Decision
         decision = "CONTINUE_RESEARCH"
 
         # Check stopping conditions
-        total_unresolved = len(unresolved_stubs) + len(focus_concepts_output)
+        total_unresolved = len(unresolved_stub_by_id)
 
         if total_unresolved == 0:
             decision = "STOP_PREREQUISITES_MET"
@@ -744,56 +778,170 @@ def criteria_check(
                 "INFO", f"KG2: Maximum iterations ({iteration_main_cycle}) reached"
             )
 
-        # Step 5: Prioritize and Select Top N focus concepts for next iteration
+        # Step 5: Prioritize and select parent prerequisite groups.
         if decision == "CONTINUE_RESEARCH":
-            all_focus_candidates = focus_concepts_output + unresolved_stubs
-
-            # Prioritize by:
-            # 1. Stubs with some existing definition but low confidence
-            # 2. Higher confidence stubs
-            # 3. Older stubs
-            def priority_score(node: ConceptNode) -> tuple:
-                # Higher scores = higher priority (will be sorted in reverse)
-                # Handle both ConceptNode and ConceptPrerequisite objects
-                if hasattr(node, "id"):  # ConceptNode
-                    has_some_definition = 1 if node.definition else 0
-                    confidence_score = node.confidence
-                    # Use negative timestamp so older nodes get higher priority
-                    age_score = -(node.updated_at.timestamp())
-                else:  # ConceptPrerequisite
-                    has_some_definition = 1 if node.profile else 0
-                    confidence_score = node.confidence
-                    age_score = 0  # No timestamp for prerequisites
-
-                return (has_some_definition, confidence_score, age_score)
-
-            # Sort by priority (highest first) and limit to max batch size
-            max_focus_concepts = config.max_focus_concepts
-            all_focus_candidates = [
-                node
-                for node in all_focus_candidates
-                if not (
-                    getattr(node, "id", None) == goal_node_current.id
-                    or getattr(node, "node_type", "") == "goal"
-                    or getattr(node, "session_disposition", None)
-                    == SessionDispositionState.PRUNED
-                )
-            ]
-            sorted_candidates = sorted(
-                all_focus_candidates, key=priority_score, reverse=True
+            reachable_parent_ids = set(prerequisite_node_ids).union(
+                goal_dependency_roots
             )
-            focus_concepts_output = sorted_candidates[:max_focus_concepts]
+            prereq_groups: Dict[str, Dict[str, Any]] = {}
+            for rel in awg_current.relationships.values():
+                if rel.type != RelationshipType.HAS_PREREQUISITE:
+                    continue
+                parent_id = rel.source_node_id
+                child_id = rel.target_node_id
+                if parent_id not in reachable_parent_ids:
+                    continue
+                if parent_id in pruned_ids or child_id in pruned_ids:
+                    continue
+                child_node = unresolved_stub_by_id.get(child_id)
+                if child_node is None:
+                    continue
+                if (
+                    child_node.id == goal_node_current.id
+                    or child_node.node_type == "goal"
+                ):
+                    continue
+
+                parent_node = awg_current.get_node(parent_id)
+                if not parent_node:
+                    continue
+                if parent_node.session_disposition == SessionDispositionState.PRUNED:
+                    continue
+
+                group = prereq_groups.setdefault(
+                    parent_id,
+                    {
+                        "parent": parent_node,
+                        "children": [],
+                        "child_ids": set(),
+                        "path_strengths": [],
+                    },
+                )
+                if child_id in group["child_ids"]:
+                    continue
+                group["child_ids"].add(child_id)
+                group["children"].append(child_node)
+                group["path_strengths"].append(path_strength_by_node.get(child_id, 0.0))
+
+            ranked_groups = []
+            for parent_id, group in prereq_groups.items():
+                children = group["children"]
+                strengths = group["path_strengths"]
+                if not children:
+                    continue
+                avg_strength = sum(strengths) / len(strengths)
+                max_strength = max(strengths)
+                group_size = len(children)
+                parent_node = group["parent"]
+                parent_age = parent_node.updated_at.timestamp()
+                ranked_groups.append(
+                    {
+                        "parent_id": parent_id,
+                        "parent_name": parent_node.name,
+                        "parent_age": parent_age,
+                        "children": children,
+                        "group_size": group_size,
+                        "avg_path_strength": avg_strength,
+                        "max_path_strength": max_strength,
+                    }
+                )
+
+            ranked_groups.sort(
+                key=lambda g: (
+                    g["avg_path_strength"],
+                    g["max_path_strength"],
+                    -g["group_size"],
+                    -g["parent_age"],
+                ),
+                reverse=True,
+            )
 
             session_log.log(
                 "INFO",
-                f"KG2: Selected {len(focus_concepts_output)} concepts for next iteration",
+                "KG2: Built ranked prerequisite parent groups",
                 {
-                    "selected_concepts": [
-                        {"name": node.name, "id": node.id, "status": node.status.value}
-                        for node in focus_concepts_output
-                    ]
+                    "group_count": len(ranked_groups),
+                    "selection_budget": n_nodes,
+                    "remaining_awg_node_budget": remaining_awg_node_budget,
+                    "top_groups": [
+                        {
+                            "parent_id": group["parent_id"],
+                            "parent_name": group["parent_name"],
+                            "group_size": group["group_size"],
+                            "avg_path_strength": group["avg_path_strength"],
+                        }
+                        for group in ranked_groups[:5]
+                    ],
                 },
             )
+
+            remaining_slots = n_nodes
+            selected_focus_ids = set()
+            selected_groups = []
+            for group in ranked_groups:
+                additional_children = [
+                    node
+                    for node in group["children"]
+                    if node.id not in selected_focus_ids
+                ]
+                additional_count = len(additional_children)
+                if additional_count == 0:
+                    continue
+                if additional_count > remaining_slots:
+                    continue
+                selected_groups.append(group)
+                for node in additional_children:
+                    selected_focus_ids.add(node.id)
+                    focus_concepts_output.append(node)
+                remaining_slots -= additional_count
+                if remaining_slots == 0:
+                    break
+
+            if not focus_concepts_output:
+                decision = "STOP_AWG_BUDGET"
+                session_log.log(
+                    "INFO",
+                    "KG2: No prerequisite parent group fits selection budget",
+                    {
+                        "selection_budget": n_nodes,
+                        "remaining_awg_node_budget": remaining_awg_node_budget,
+                        "candidate_group_count": len(ranked_groups),
+                        "smallest_group_size": (
+                            min(
+                                (group["group_size"] for group in ranked_groups),
+                                default=0,
+                            )
+                        ),
+                    },
+                )
+            else:
+                session_log.log(
+                    "INFO",
+                    f"KG2: Selected {len(focus_concepts_output)} concepts for next iteration",
+                    {
+                        "selection_budget": n_nodes,
+                        "remaining_slots": remaining_slots,
+                        "selected_group_count": len(selected_groups),
+                        "selected_groups": [
+                            {
+                                "parent_id": group["parent_id"],
+                                "parent_name": group["parent_name"],
+                                "group_size": group["group_size"],
+                                "avg_path_strength": group["avg_path_strength"],
+                            }
+                            for group in selected_groups
+                        ],
+                        "selected_concepts": [
+                            {
+                                "name": node.name,
+                                "id": node.id,
+                                "status": node.status.value,
+                            }
+                            for node in focus_concepts_output
+                        ],
+                    },
+                )
+
         else:
             focus_concepts_output = []
 

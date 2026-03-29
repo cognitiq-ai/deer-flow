@@ -141,7 +141,7 @@ On exception, returns `{}`.
 - Current: `relationships/nodes.py::get_related_concepts` uses `state.definition` embedding search and broad exception fallback to empty results; relation discovery can be silently skipped.
 
 - Intended: personalization controls all downstream prerequisite behavior.
-- Current: strong controls are implemented with deterministic post-check corrections driven by structured LLM outputs (scope/constraints, relevance hard gate, intent facets, and novelty saturation), while softer preference fields remain advisory.
+- Current: strong controls are implemented with deterministic post-check corrections driven by structured LLM outputs (scope/constraints, in-scope/intent gates, and novelty saturation), while softer preference fields remain advisory.
 
 ## Plausible Failure Modes (High-Level)
 

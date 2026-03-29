@@ -496,17 +496,24 @@ class AgentWorkingGraph(BaseModel):
         return prerequisite_nodes
 
     def prerequisite_path_strengths(
-        self, root_node_ids: List[str], excluded_node_ids: Optional[set[str]] = None
+        self,
+        root_node_ids: List[str],
+        excluded_node_ids: Optional[set[str]] = None,
+        root_node_strengths: Optional[Dict[str, float]] = None,
     ) -> Dict[str, float]:
         """
         Compute max confidence-product path strength for prerequisites reachable
         from the provided roots over HAS_PREREQUISITE edges.
+
+        Root nodes can optionally be assigned per-root starting strengths
+        via ``root_node_strengths``; if not provided, each root starts at 1.0.
 
         Returns:
             Mapping node_id -> max path strength in [0, 1].
         """
         strengths: Dict[str, float] = {}
         excluded = excluded_node_ids or set()
+        initial_strengths = root_node_strengths or {}
         adjacency: Dict[str, List[Relationship]] = {}
         for rel in self.relationships.values():
             if rel.type != RelationshipType.HAS_PREREQUISITE:
@@ -536,8 +543,10 @@ class AgentWorkingGraph(BaseModel):
             if root_id in excluded:
                 continue
             if root_id in self.nodes:
-                strengths[root_id] = max(strengths.get(root_id, 0.0), 1.0)
-                dfs(root_id, 1.0, set())
+                root_strength = initial_strengths.get(root_id, 1.0)
+                root_strength = max(min(root_strength, 1.0), 0.0)
+                strengths[root_id] = max(strengths.get(root_id, 0.0), root_strength)
+                dfs(root_id, root_strength, set())
         return strengths
 
     def find_unresolved_stubs(

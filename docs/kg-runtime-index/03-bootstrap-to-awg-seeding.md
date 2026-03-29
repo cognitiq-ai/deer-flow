@@ -1,6 +1,6 @@
 # Bootstrap to AWG Seeding
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-29  
 Runtime path: post-bootstrap initialization in `session_orchestrator`  
 Primary files: `src/orchestrator/session.py`, `src/orchestrator/kg.py`, `src/db/pkg_interface.py`
 
@@ -9,7 +9,7 @@ Primary files: `src/orchestrator/session.py`, `src/orchestrator/kg.py`, `src/db/
 After bootstrap completes, orchestrator converts the `BootstrapContract` into:
 
 1. a persisted goal node in PKG,
-2. persisted seed concept nodes,
+2. session-scoped seed concept nodes in AWG,
 3. `FULFILLS_GOAL` edges from each seed concept to the goal,
 4. an initial `AgentWorkingGraph` containing those nodes/edges,
 5. the first `focus_concepts_next_iteration` list.
@@ -28,14 +28,13 @@ After bootstrap completes, orchestrator converts the `BootstrapContract` into:
 - Constructs goal node from `bootstrap_contract.canonical_goal.normalized_goal_outcome`
   - `node_type="goal"`
   - persists through `pkg_interface.find_or_create_node`
-- Iterates over `selected_initial_focus_concepts`
-  - creates concept node (`topic=goal_name`)
-  - persists through `find_or_create_node`
+- Iterates over `bootstrap_contract.seed_concepts`
+  - creates concept node in AWG with `name` and `summary=anchor.definition`
   - appends to `seed_concepts`
 - For each seed concept:
   - creates `RelationshipType.FULFILLS_GOAL` relation to goal
-  - persists via `find_or_create_relationship` (warning/logged on failure)
-  - adds relation to AWG regardless of relation persistence success path
+  - adds relation to AWG
+- `criteria_check` later uses `FULFILLS_GOAL` edge confidence as optional root-strength prior when available; missing/zero confidence falls back to `1.0`.
 
 - Returns tuple:
   - `goal_node`
@@ -50,7 +49,6 @@ After bootstrap completes, orchestrator converts the `BootstrapContract` into:
   - `src/orchestrator/kg.py::seed_awg_from_bootstrap`
 - Persistence calls:
   - `src/db/pkg_interface.py::find_or_create_node`
-  - `src/db/pkg_interface.py::find_or_create_relationship`
 
 ## Relationship to Step Model
 
@@ -63,15 +61,15 @@ After bootstrap completes, orchestrator converts the `BootstrapContract` into:
 - Current: duplicate or semantically equivalent seed names are not normalized at seeding time beyond underlying PKG ID checks; semantic dedup is mostly deferred to later consolidation logic.
 
 - Intended: edge persistence and AWG state remain tightly consistent.
-- Current: if `FULFILLS_GOAL` relation persistence fails, the relation may still exist in AWG state for the current run, creating temporary AWG/PKG mismatch.
+- Current: seed `FULFILLS_GOAL` edges are created in AWG for runtime selection; persistence synchronization to PKG occurs through later consolidation/commit flows.
 
 - Intended: clear transactional commit for bootstrap seeding.
-- Current: node and relationship writes are sequential operations without a transaction boundary spanning all seed artifacts.
+- Current: only goal-node persistence is performed in this step; seed nodes/edges are session-scoped AWG artifacts and are committed later via downstream flows.
 
 ## Plausible Failure Modes (High-Level)
 
 - Goal node persistence failure -> function returns `(None, empty_awg, [])` via catch-all and orchestrator returns bootstrap-seeding failure.
-- Seed relationship write failure -> warning logged; run continues.
+- Missing/mismatched anchor lookup for a selected seed concept -> that seed is skipped and logged.
 - PKG write race/dup risk under concurrency if uniqueness constraints are not enforced at DB layer.
 
 ## Related Modules

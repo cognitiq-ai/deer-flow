@@ -1,6 +1,6 @@
 # Main Loop and Focus Selection
 
-Last reviewed: 2026-03-22  
+Last reviewed: 2026-03-29  
 Runtime path: KG1/KG2 in orchestrator  
 Primary files: `src/orchestrator/session.py`, `src/orchestrator/kg.py`, `src/config/configuration.py`, `src/kg/agent_working_graph.py`
 
@@ -23,11 +23,11 @@ From `session_orchestrator`:
 
 Default config (`Configuration`):
 
-- `max_iteration_main = 3`
+- `max_iteration_main = 5`
 - `max_parallel_inner_loops = 5`
 - `max_focus_concepts = 5`
-- `max_awg_nodes_total = 60` (time-aware override can be applied from bootstrap constraints)
-- `min_path_confidence_product = 0.08`
+- `max_awg_nodes_total = 30` (time-aware override can be applied from bootstrap constraints)
+- `min_path_confidence_product = 0.5`
 
 ### Per-Iteration Execution
 
@@ -53,23 +53,35 @@ Default config (`Configuration`):
 1. Validate goal node is present in AWG.
 2. Build prerequisite roots:
    - gather source concepts from `FULFILLS_GOAL` edges targeting the goal
+   - use edge confidence (when present) as per-root starting strength
    - fallback to `goal_id` when no fulfilling concepts are present
 3. Traverse prerequisite paths from each root:
    - `awg_current.find_prerequisites_path(root_id)`
-4. Collect unresolved stubs:
+   - `awg_current.prerequisite_path_strengths(...)` computes confidence-product scores over `HAS_PREREQUISITE`
+4. Compute selection budget:
+   - `remaining_awg_node_budget = max_awg_nodes_total - active_resolved_nodes`
+   - `n_nodes = min(max_focus_concepts, remaining_awg_node_budget)`
+   - if `n_nodes <= 0`, return `STOP_AWG_BUDGET`
+5. Collect unresolved stubs:
    - `status == STUB`
-   - skip goal nodes
-   - skip weak structural branches where path-strength (confidence-product from goal roots) is below `min_path_confidence_product`
-5. Stopping decisions:
-   - no unresolved -> `STOP_PREREQUISITES_MET`
+   - skip goal/pruned nodes
+   - skip weak branches where path-strength `< min_path_confidence_product`
+6. Build parent prerequisite groups (immediate `HAS_PREREQUISITE` children per parent):
+   - include only unresolved, path-qualified stub children
+   - groups are selected all-or-none under the `n_nodes` budget
+7. Rank groups by:
+   - average path strength (desc)
+   - max path strength (desc)
+   - smaller group size
+   - older parent age
+8. Pack groups greedily:
+   - include a full group only if it fits remaining slots
+   - no partial group inclusion
+9. Stopping decisions:
+   - no unresolved stubs -> `STOP_PREREQUISITES_MET`
    - iteration limit reached -> `STOP_MAX_ITERATIONS`
-   - AWG node count at/above cap -> `STOP_AWG_BUDGET`
-6. If continuing:
-   - prioritize candidates by tuple:
-     - has some definition
-     - confidence
-     - older updated time
-   - truncate to `max_focus_concepts`
+   - AWG active resolved nodes at/above cap -> `STOP_AWG_BUDGET`
+   - unresolved stubs exist but no full group fits budget -> `STOP_AWG_BUDGET`
 
 ## Evidence (Code References)
 
@@ -91,13 +103,13 @@ Default config (`Configuration`):
 ## Intended vs Current Gap
 
 - Intended: robust and semantically complete “next best concept” selection.
-- Current: selection is restricted to unresolved stubs on prerequisite paths anchored by goal-fulfilling concepts; unresolved concepts outside those paths are ignored.
+- Current: selection is deliberately constrained to prerequisite-path unresolved stubs and now enforces parent-group all-or-none packing under a strict node budget.
 
 - Intended: transparent distributed execution semantics.
 - Current: Celery fallback behavior is local and silent (except logs), so runtime characteristics differ across environments.
 
 - Intended: stable iteration budgets for complex goals.
-- Current: iteration budget still matters, but hard AWG node cap and path-strength filtering now limit tangential expansion earlier.
+- Current: budget is enforced directly in KG2 via `n_nodes` packing, which can stop sessions early when only oversized parent groups remain.
 
 ## Plausible Failure Modes (High-Level)
 
@@ -106,6 +118,7 @@ Default config (`Configuration`):
 - Missing goal node in AWG leads to stop decision (`STOP_GOAL_UNRESOLVABLE`).
 - High fan-out goals with limited `max_focus_concepts` can starve lower-priority concepts.
 - Overly conservative path-strength threshold can suppress legitimately useful low-confidence branches.
+- All-or-none parent-group packing may leave small residual budget unused when remaining groups are oversized.
 
 ## Related Modules
 

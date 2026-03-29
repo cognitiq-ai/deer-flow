@@ -26,7 +26,8 @@ Scope covered:
 
 Important behavior:
 1. `seed_awg_from_bootstrap` uses `seed_concepts` as the first focus set.
-2. The session budget is also derived from constraints after bootstrap completion.
+2. `criteria_check` can use `FULFILLS_GOAL` edge confidence as root-strength prior when confidence is present; otherwise roots default to `1.0`.
+3. The session budget is also derived from constraints after bootstrap completion.
 
 ## 2) Time-aware hard cap on graph size (session-level)
 
@@ -105,19 +106,26 @@ This is the saturation gate and is enforced after merge, not mid-discovery.
 `criteria_check` enforces these in each session cycle:
 
 1. AWG node hard stop:
-   - If non-goal resolved and non-pruned nodes count reaches or exceeds `max_awg_nodes_total`, decision is `STOP_AWG_BUDGET`.
-2. Structural path-strength filter:
+   - If active resolved and non-pruned node count reaches or exceeds `max_awg_nodes_total`, decision is `STOP_AWG_BUDGET`.
+2. Selection-budget gate:
+   - `remaining_awg_node_budget = max_awg_nodes_total - active_resolved_nodes`
+   - `n_nodes = min(max_focus_concepts, remaining_awg_node_budget)`
+   - If `n_nodes <= 0`, decision is `STOP_AWG_BUDGET`.
+3. Structural path-strength filter:
    - Computes `prerequisite_path_strengths` from goal roots over `HAS_PREREQUISITE`.
+   - Root strengths are seeded from `FULFILLS_GOAL` confidence (default `1.0` if unavailable).
    - For each unresolved stub, if path strength `< min_path_confidence_product`, the stub is skipped.
-3. Goal-failure gate:
+4. Goal-failure gate:
    - if goal node is missing, decision is `STOP_GOAL_UNRESOLVABLE`.
-4. Coverage completion gate:
+5. Coverage completion gate:
    - If no unresolved stubs remain, decision is `STOP_PREREQUISITES_MET`.
-5. Session cap gate:
+6. Session cap gate:
    - If iteration reached `max_iteration_main`, decision is `STOP_MAX_ITERATIONS`.
-6. Focus gating:
-   - Otherwise unresolved candidates are scored and trimmed to `max_focus_concepts`.
-   - Higher `focus` priority is given to already partially defined stubs and higher-confidence stubs.
+7. Parent-group focus gating:
+   - Otherwise unresolved stubs are grouped by immediate prerequisite parent.
+   - Group score uses average path strength (with tie-breakers on max strength, smaller group size, then older parent).
+   - Groups are packed all-or-none under `n_nodes`; no partial group is selected.
+   - If unresolved stubs exist but no group fits, decision is `STOP_AWG_BUDGET`.
    - Candidates with `session_disposition=pruned` are excluded.
 
 This produces the next list of concept stubs and a session decision for the next loop turn.
@@ -154,7 +162,7 @@ These map directly to when content generation proceeds, whether partial graph ou
    - profile research -> evaluate -> personalization fit/policy/disposition -> optional prereq discovery -> merge or discard-short-circuit.
 5. Per-concept policy/disposition can halt expansion independent of global state.
 6. Per-concept merge computes saturation and updates overlay.
-7. Next criteria pass applies AWG budget, path-strength, unresolved-queue rules, and pruned exclusions.
+7. Next criteria pass applies AWG budget, root-weighted path-strength, parent-group packing rules, and pruned exclusions.
 
 ## 10) Practical tuning map
 
@@ -173,3 +181,4 @@ These map directly to when content generation proceeds, whether partial graph ou
 2. Novelty saturation is only recalculated after a merge step; a concept with weak novelty will not be blocked mid-discovery.
 3. Pruned state is session-scoped on `ConceptNode.session_disposition` and must be honored by traversal/order/commit logic.
 4. AWG budget is currently node-based only; relationship count is not separately capped.
+5. `STOP_AWG_BUDGET` can mean either cap exhaustion or "no full parent-group fits current selection budget."

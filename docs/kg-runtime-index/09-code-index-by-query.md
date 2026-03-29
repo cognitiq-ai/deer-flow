@@ -39,7 +39,7 @@ Use this as the first stop when you have a specific runtime question.
 
 - `src/orchestrator/kg.py::seed_awg_from_bootstrap`
 - `src/db/pkg_interface.py::find_or_create_node`
-- `src/db/pkg_interface.py::find_or_create_relationship`
+- `src/kg/base_models.py::RelationshipProfile` (bootstrap anchor confidence carried on `FULFILLS_GOAL`)
 
 ### "How are current focus concepts chosen each iteration?"
 
@@ -47,6 +47,7 @@ Use this as the first stop when you have a specific runtime question.
 - `src/kg/base_models.py::RelationshipType.FULFILLS_GOAL` (goal-fulfilling roots for prerequisite traversal)
 - `src/kg/agent_working_graph.py::find_prerequisites_path`
 - `src/kg/agent_working_graph.py::prerequisite_path_strengths`
+- parent-group all-or-none budget packing is implemented in `criteria_check`
 - `src/config/configuration.py::Configuration` (`max_focus_concepts`, `max_iteration_main`, `min_path_confidence_product`, `max_awg_nodes_total`)
 
 ### "Where is intent coverage mapped and enforced?"
