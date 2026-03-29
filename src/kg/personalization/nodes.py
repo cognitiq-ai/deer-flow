@@ -8,7 +8,11 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import RunnableConfig
 
 from src.config.configuration import Configuration
-from src.kg.base_models import SessionDispositionState
+from src.kg.base_models import (
+    ConceptNodeStatus,
+    RelationshipType,
+    SessionDispositionState,
+)
 from src.kg.message_store import (
     MessageStore,
     curate_messages,
@@ -511,16 +515,70 @@ def personalization_prereq_policy(
         return {}
 
     warnings = list(state.personalization_warnings or [])
+    hard_cap = getattr(configurable, "max_new_prereqs", 0)
+    total_cap = getattr(configurable, "max_total_prereqs", 0)    
+    existing_prereq_nodes = state.awg_context.get_target_neighbors(
+        state.concept.id, RelationshipType.HAS_PREREQUISITE
+    )
+    existing_prereq_count = len(existing_prereq_nodes)
+    existing_prereqs = [
+        node.model_dump(include={"name", "definition", "status"})
+        for node in existing_prereq_nodes
+        if getattr(node, "status", None) != ConceptNodeStatus.STUB
+    ]
+    remaining_total_slots = max(total_cap - existing_prereq_count, 0)
+
+    # Deterministic short-circuit: no remaining prerequisite slots means stop.
+    # Skip LLM policy generation entirely in this case.
+    overlay
+    if remaining_total_slots == 0 or not overlay.fit.in_scope:
+        warnings.append("forced_prereq_policy_stop_total_prereq_cap_reached")
+        policy = overlay.prereq_policy.model_copy(
+            update={
+                "action": "stop",
+                "reason": (
+                    f"{overlay.prereq_policy.reason} (Forced stop: total per-concept "
+                    "prerequisite cap reached for this session AWG.)"
+                ),
+            }
+        )
+        concept = state.concept.model_copy(
+            update={"session_disposition": SessionDispositionState.STOP_EXPAND}
+        )
+        awg_context = state.awg_context.deep_copy()
+        awg_context.merge_node(concept)
+        new_overlay = overlay.model_copy(update={"prereq_policy": policy})
+        messages = make_message_entry(
+            "personalization_prereq_policy",
+            "prereq_policy",
+            [
+                HumanMessage(
+                    content="Deterministic policy: total prerequisite slot cap reached."
+                ),
+                AIMessage(content=format_message("prereq_policy", to_yaml(policy))),
+            ],
+        )
+        return {
+            "messages": messages,
+            "concept": concept,
+            "awg_context": awg_context,
+            "personalization_overlay": new_overlay,
+            "personalization_warnings": warnings,
+        }
 
     formatted = personalization_prereq_policy_instructions.format(
         fit_yaml=to_yaml(overlay.fit),
         mode_yaml=to_yaml(overlay.mode),
+        goal_outcome=req.goal.outcome,
+        success_criteria_yaml=to_yaml(req.goal.success_criteria),
         scope_inclusions_yaml=to_yaml(req.goal.scope_inclusions),
         scope_exclusions_yaml=to_yaml(req.goal.scope_exclusions),
         tooling_constraints_yaml=to_yaml(req.constraints.tooling_constraints),
         accessibility_needs_yaml=to_yaml(req.constraints.accessibility_needs),
         intent_coverage_map_yaml=to_yaml(state.intent_coverage_map),
+        existing_prereqs_yaml=to_yaml(existing_prereqs),
         depth=req.preferences.depth,
+        max_new_prereqs_cap=hard_cap or 0,
     )
 
     curated_context = curate_messages(
@@ -569,6 +627,21 @@ def personalization_prereq_policy(
             }
         )
 
+    # Hard cap for per-concept prerequisite additions from global configuration.
+    if policy.action == "limit":
+        max_new_prereqs = policy.max_new_prereqs or 0
+        if hard_cap > 0 and max_new_prereqs > hard_cap:
+            warnings.append("forced_prereq_policy_limit_cap_by_config")
+            policy = policy.model_copy(
+                update={
+                    "max_new_prereqs": hard_cap,
+                    "reason": (
+                        f"{policy.reason} (Config-enforced limit applied: "
+                        f"max_new_prereqs reduced to {hard_cap}.)"
+                    ),
+                }
+            )
+
     # Hard/priority guard from structured intent support adjudication.
     if (
         overlay.fit.supports_required_intents is False
@@ -609,6 +682,47 @@ def personalization_prereq_policy(
                 ),
             }
         )
+
+    # Minimal deterministic layer using prerequisite sufficiency and hard slots.
+    if remaining_total_slots == 0 and policy.action != "stop":
+        warnings.append("forced_prereq_policy_stop_total_prereq_cap_reached")
+        policy = policy.model_copy(
+            update={
+                "action": "stop",
+                "reason": (
+                    f"{policy.reason} (Forced stop: total per-concept prerequisite cap "
+                    f"reached for this session AWG.)"
+                ),
+            }
+        )
+
+    if policy.action == "expand" and remaining_total_slots > 0:
+        max_limit = min(hard_cap or remaining_total_slots, remaining_total_slots)
+        policy = policy.model_copy(
+            update={
+                "action": "limit",
+                "max_new_prereqs": max_limit,
+                "reason": (
+                    f"{policy.reason} (Converted expand->limit to enforce minimal bounded "
+                    f"expansion for this pass.)"
+                ),
+            }
+        )
+
+    if policy.action == "limit" and remaining_total_slots > 0:
+        max_new = policy.max_new_prereqs or 0
+        bounded = min(max_new, remaining_total_slots)
+        if bounded != max_new:
+            warnings.append("forced_prereq_policy_limit_total_slot_clip")
+            policy = policy.model_copy(
+                update={
+                    "max_new_prereqs": bounded,
+                    "reason": (
+                        f"{policy.reason} (Clipped by remaining total prerequisite slots: "
+                        f"{bounded}.)"
+                    ),
+                }
+            )
 
     # Ensure limit invariants (schema also validates, but keep guardrails)
     if policy.action == "limit" and (

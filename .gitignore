@@ -27,3 +27,4 @@ conf.yaml
 # coverage report
 coverage.xml
 coverage/
+tika/*

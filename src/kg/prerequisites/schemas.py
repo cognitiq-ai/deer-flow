@@ -12,6 +12,7 @@ from pydantic import (
     model_validator,
 )
 
+from src.config import Configuration
 from src.kg.research.schemas import EvidenceAtom, ResearchUrl, SearchQuery
 from src.kg.utils import EnumDescriptor, EnumMember, PydanticEnum
 
@@ -22,10 +23,17 @@ class CoverageEvaluation(BaseModel):
     coverage_score: float = Field(
         ge=0.0,
         le=1.0,
-        description="Recall proxy: how much of the direct prerequisite set is likely covered",
+        description=(
+            "Learner-goal sufficiency proxy for direct prerequisites in the current set. "
+            "Interpretation: high score means prerequisite coverage is sufficient to proceed "
+            "without further expansion for this learner and target."
+        ),
     )
     coverage_gap: str = Field(
-        description="Short summary of remaining coverage gaps in the current prerequisite discovery research for the research concept."
+        description=(
+            "Short, concrete verdict on sufficiency plus remaining gaps. Include whether the "
+            "current set is sufficient for the learner goal and name the most critical missing blockers, if any."
+        )
     )
     explore_areas: List[str] = Field(
         default_factory=list,
@@ -184,7 +192,9 @@ class CandidatePrerequisites(BaseModel):
 
     candidates: List[DiscoveryCandidate] = Field(
         default_factory=list,
-        description="Raw prerequisite candidates proposed directly from the discovery context.",
+        description=(
+            "Raw prerequisite candidates proposed directly from the discovery context. Prioritize direct/strong prerequisite relationships first."
+        ),
     )
 
     @classmethod
@@ -282,7 +292,10 @@ class CanonicalPrerequisites(BaseModel):
 
     candidates: List[ConceptPrerequisite] = Field(
         default_factory=list,
-        description="Canonical prerequisite concepts after organizing, merging, and splitting discovery candidates.",
+        description=(
+            "Canonical prerequisite concepts after organizing, merging, and splitting discovery candidates. Output should be ranked by prerequisite directness and blocking importance."
+        ),
+        min_length=1,
     )
 
 

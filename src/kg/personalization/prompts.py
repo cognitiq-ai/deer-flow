@@ -151,6 +151,14 @@ Decide how prerequisite discovery should behave for this concept.
 {mode_yaml}
 </mode_decision_yaml>
 
+<goal_outcome>
+{goal_outcome}
+</goal_outcome>
+
+<goal_success_criteria>
+{success_criteria_yaml}
+</goal_success_criteria>
+
 <scope_controls>
 scope_inclusions: {scope_inclusions_yaml}
 scope_exclusions: {scope_exclusions_yaml}
@@ -165,16 +173,24 @@ accessibility_needs: {accessibility_needs_yaml}
 {intent_coverage_map_yaml}
 </intent_coverage_map_yaml>
 
-<depth_preference>
-depth: {depth}
-</depth_preference>
+<existing_prerequisites_yaml>
+{existing_prereqs_yaml}
+</existing_prerequisites_yaml>
 
 ### Decision rubric
-- If `fit.in_scope` is false: action must be `stop`.
 - Expand only if the concept blocks progress AND depth is not overview.
 - Stop if expansion would push into exclusions or low relevance.
 - Stop if the concept does not support any required intent facet unless it clearly blocks progress.
-- If action is `limit`, max_new_prereqs must be present and >0.
+- Assess sufficiency against `<goal_outcome>` and `<goal_success_criteria>` using existing prerequisites first.
+- **Sufficient means:** the current existing prerequisites already cover the immediate blockers required to achieve the success criteria at the requested depth; no additional prerequisite is needed to proceed.
+- If sufficient, choose `stop`.
+- If expansion is needed, prefer `limit` with only immediate high-impact blockers.
+- If action is `limit`, `max_new_prereqs` must be present and >0.
+- Populate `prereq_scope_advice` with a short scope note for downstream prerequisite coverage (what to prioritize/deprioritize). It should consider any prerequisites already in `<existing_prerequisites_yaml>`.
+- The subject matter depth is {depth}
+- Limit the number of prerequisites to {max_new_prereqs_cap}
+- When limiting, rank candidates by direct prerequisite strength and prioritize the most blocking/closest immediate prerequisites first.
+- Prefer candidates that are immediately actionable (direct dependency candidates) and prune weaker/indirect ones first.
 
 ### Output protocol
 - Output **JSON only** (no prose/markdown).

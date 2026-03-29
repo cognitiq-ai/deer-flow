@@ -60,7 +60,24 @@ This means budget is constrained by learner time intent before any inner-loop wo
    - If constraints are violated -> action becomes `stop`.
    - If novelty saturation flag is already set from previous merge -> action becomes `stop`.
    - If `mode` is `skip`/`recap` and concept is non-blocking -> action becomes `stop`.
-6. Disposition semantics:
+6. Hard cap for prerequisite breadth:
+   - Global cap: `Configuration.max_new_prereqs` (in `src/config/configuration.py`).
+   - Passed into personalization and prerequisite LLM prompts (`src/kg/personalization/prompts.py`, `src/kg/prerequisites/prompts.py`) so the model knows the limit before proposing candidates.
+   - `personalization_prereq_policy` clips any LLM-suggested `max_new_prereqs` to this cap.
+   - `_apply_prereq_personalization_policy` and `merge_prerequisites` enforce the same hard cap during filtering and final AWG stub creation.
+7. Hard cap for total prerequisite edges per concept in session AWG:
+   - Global cap: `Configuration.max_total_prereqs`.
+   - `personalization_prereq_policy` receives current/remaining slots and can force `stop` when slots are exhausted.
+   - `merge_prerequisites` is the final guard and blocks additional `HAS_PREREQUISITE` edges once the per-concept total cap is reached.
+8. Minimal deterministic expand/limit/stop layer:
+   - If total prerequisite slots are exhausted, policy is forced to `stop`.
+   - If policy returns `expand`, runtime converts to bounded `limit` for minimal, controlled growth.
+   - If policy returns `limit`, it is clipped by remaining total prerequisite slots.
+9. Scope advice bridge (personalization -> prerequisites):
+   - `PrereqPolicy.prereq_scope_advice` captures concise scope guidance for the current concept.
+   - This advice is injected into initial prerequisite planning, external candidate discovery, and prerequisite coverage evaluation prompts.
+   - Coverage scoring remains canonical for the concept; scope advice only steers prioritization.
+10. Disposition semantics:
    - `active`: concept can continue prerequisite expansion.
    - `stop_expand`: concept is retained in AWG, but local prereq expansion is halted.
    - `pruned`: concept is soft-tombstoned for the session and excluded from traversal/focus/content/commit.
@@ -174,11 +191,17 @@ These map directly to when content generation proceeds, whether partial graph ou
    - move depth from `overview` to `standard`/`rigorous`; this affects node budget factor.
 4. Improve constraint adherence:
    - keep bootstrap clarification focused on concrete constraints and measurable intent facets, since controls are now LLM-evaluated from these structures.
+5. Tune prerequisite branching width:
+   - adjust `max_new_prereqs` to widen or narrow per-concept expansion before merge.
+6. Tune total prerequisite footprint per concept:
+   - adjust `max_total_prereqs` to control per-concept prerequisite edge growth in session AWG.
+7. Tune scope steering quality:
+   - improve `prereq_scope_advice` quality in personalization prompt/schema to better prioritize what discovery should look for first.
 
 ## 11) Known implementation caveats
 
 1. The path-strength filter is structural over `HAS_PREREQUISITE` only.
 2. Novelty saturation is only recalculated after a merge step; a concept with weak novelty will not be blocked mid-discovery.
 3. Pruned state is session-scoped on `ConceptNode.session_disposition` and must be honored by traversal/order/commit logic.
-4. AWG budget is currently node-based only; relationship count is not separately capped.
+4. Relationship count now has a per-concept cap for `HAS_PREREQUISITE` via `max_total_prereqs`.
 5. `STOP_AWG_BUDGET` can mean either cap exhaustion or "no full parent-group fits current selection budget."

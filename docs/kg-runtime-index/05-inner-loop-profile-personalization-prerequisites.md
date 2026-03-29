@@ -97,17 +97,21 @@ Hard constraints implemented in code include:
 - skip/recap + non-blocking can short-circuit prerequisite expansion
 - required-intent-facet mismatch (from bootstrap `intent_coverage_map`) can force prereq policy `stop` for non-blocking concepts
 - previously saturated concepts (`novelty_saturated`) are forced to keep prereq policy `stop` on future visits
+- hard cap on candidates is enforced via `Configuration.max_new_prereqs`; both policy output and merge path clamp to this limit.
+- total per-concept prerequisite edges are capped in-session via `Configuration.max_total_prereqs`.
+- minimal deterministic policy layer enforces: no remaining total slots -> `stop`; `expand` is converted to bounded `limit`; `limit` is clipped to remaining total slots.
 - intent/constraint checks are enforced from structured LLM adjudication fields (no lexical keyword matching)
+- policy includes `prereq_scope_advice` to steer downstream prerequisite discovery/coverage prioritization while keeping prerequisite semantics canonical.
 - per-concept `ConceptNode.session_disposition` (`active`|`stop_expand`|`pruned`) is set in personalization and controls downstream routing/selection
 
 ### Step 6: Prerequisite discovery
 
 - Initial plan:
-  - `prerequisites/nodes.py::initial_prerequisite_research`
+  - `prerequisites/nodes.py::initial_prerequisite_research` (consumes `prereq_scope_advice` from personalization policy)
 - Candidate generation and canonicalization:
   - `propose_prerequisites` (existing + improved + external + taxonomy passes)
 - Candidate/global scoring:
-  - `evaluate_prerequisites`
+  - `evaluate_prerequisites` (`coverage_score` remains canonical; scope advice is used for prioritization)
 - Follow-up action planning:
   - `action_prerequisites`
 - Completion gate:

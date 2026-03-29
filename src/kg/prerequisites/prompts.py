@@ -7,6 +7,11 @@ Generate up to {top_queries} search queries to discover the most likely *direct*
 {research_concept}
 </research_concept>
 
+Personalization advice for prerequisite scope:
+<prereq_scope_advice>
+{prereq_scope_advice}
+</prereq_scope_advice>
+
 Coverage goals:
 - identify prerequisite *concepts* (definitions, properties, parent categories) required to understand the target
 - identify prerequisite *skills* (procedures, techniques, methods) required to learn/apply the target
@@ -23,6 +28,7 @@ Coverage goals:
 Rules:
 - For every query, include a `concept_name` field set to the exact `<research_concept>`.
 - Prefer intents: `map_conceptual_dependencies`, `identify_skill_dependencies`, `breakdown_into_components`, `contextualize_domain`.
+- Use <prereq_scope_advice> to prioritize what to search for first, while staying canonical and focused on direct blockers.
 - Output only JSON. No prose or markdown.
 """
 
@@ -67,6 +73,8 @@ Aim for units comparable in scope and complexity (but strictly distinct) from th
 ### Output Protocol
 *   **Format:** Return **JSON only**. No prose or markdown.
 *   **Integrity:** Do not fabricate data. If you cannot populate required fields for a candidate, omit that candidate. If no candidates qualify, return an empty list.
+*   Limit output to `{max_new_prereqs_cap}` candidates.
+*   Prioritize direct, blocking prereqs first so truncation preserves strongest candidates.
 """
 
 # 2. Evaluated Candidates (discovery refinement)
@@ -94,6 +102,11 @@ Here is the list of rejected candidates:
 {rejects_str}
 </rejected_candidates>
 
+Personalization advice for prerequisite scope:
+<prereq_scope_advice>
+{prereq_scope_advice}
+</prereq_scope_advice>
+
 ### Instructions
 
 **I. Candidate Sourcing & Validation**
@@ -120,6 +133,8 @@ Here is the list of rejected candidates:
 ### Output Protocol
 *   **Format:** Return **JSON only**. No prose or markdown.
 *   **Integrity:** Do not fabricate. If research evidence is insufficient, leave empty/null.
+*   **Limit:** Output to `{max_new_prereqs_cap}` candidates.
+*   **Prioritization:** Prioritize direct, blocking prereqs first so truncation preserves strongest candidates.
 """
 
 # 3. External Prerequisites (discovery)
@@ -168,6 +183,7 @@ Exclude the following candidates in your analysis and response as they are alrea
     *   **Procedural:** Skills, steps, or logical inputs necessary to perform the procedure related to the <research_concept>. 
         *   Explicitly look for "How-to" procedural skills required to perform the <research_concept> (e.g., "Matrix Multiplication" for "Linear Transformations").
 *   **Evaluation Criteria:** Follow the <prerequisite_evaluation_taxonomy> as a guide to discover the right set of prerequisite candidates.
+*   **Scope Advice:** Use <prereq_scope_advice> to prioritize what to look for first (and what to deprioritize), while keeping candidates canonical and directly prerequisite to <research_concept>.
 
 **III. Definition & Standardization**
 *   **Synthesis:** Formulate complete, self-contained profiles from the research evidence.
@@ -177,6 +193,8 @@ Exclude the following candidates in your analysis and response as they are alrea
 ### Output Protocol
 *   **Format:** Return **JSON only**. No prose or markdown.
 *   **Integrity:** Do not fabricate. If research evidence is insufficient, leave empty/null.
+*   **Limit:** Output to `{max_new_prereqs_cap}` candidates.
+*   **Prioritization:** Prioritize direct prerequisites over indirect or noisy candidates when proposing new concepts.
 """
 
 # Prerequisites taxonomy synthesis (organization)
@@ -242,6 +260,8 @@ Refer to <prerequisite_candidate_evaluations> as a dry run evaluation for some o
 *   **Limit:** Return upto 7 canonical concepts.
 *   **Format:** Return **JSON only**. No prose or markdown.
 *   **Integrity:** Do not fabricate. If you cannot populate required fields for a candidate, omit that candidate. If no candidates qualify, return an empty list.
+*   **Limit:** Output to `{max_new_prereqs_cap}` candidates.
+*   **Priority:** Preserve the highest-impact, most immediate prerequisites first. Prioritize direct, blocking prereqs first.
 """
 
 # Prerequisites evaluation (candidate-level, recall-first)
@@ -301,26 +321,31 @@ Analyze <profile_generation> to understand the research concept and its profile:
 {research_concept}
 </research_concept>
 
-These are canonical concepts that have already been considered as prerequisite candidates for the <research_concept> and must be considered in the overall coverage assessment.
+These are canonical concepts that have been considered for the <research_concept> and must be included in the overall coverage assessment. Note that not all of these concepts will be finalized as prerequisites.
 <canonical_candidates>
 {candidates_str}
 </canonical_candidates>
 
-Individual evaluations for all candidates are available in <prerequisite_candidate_evaluations>
+Advice for prerequisite scope:
+<prereq_scope_advice>
+{prereq_scope_advice}
+</prereq_scope_advice>
+
+Individual evaluations for limited set of candidates are available in <prerequisite_candidate_evaluations> while the rest can be considered as already confirmed/rejected as prerequisites.
 
 ### Instructions
 
 **I. Structural Quality**
-*   **Evidence Scope (Critical):** Treat the `sources` (evidence atoms) and optional `evidence_summary` included in <canonical_candidates> as the only admissible evidence. Do not assume additional external research exists beyond these fields.
 *   Analyze structural organization qualities such as orthogonality, aliasing, hierarchy, level uniformity, etc. of the <canonical_candidates>.
 *   Group obvious aliases or near-duplicates into alias groups.
 *   Judge the distinctness and granularity of the <canonical_candidates> to assign an orthogonality score.
 
 **II. Coverage Assessment**
-*   **Recall Proxy:** Judge how completely the direct prerequisite space of the <research_concept> is covered by the <canonical_candidates>. 
-    *   **Constraint:** Your `coverage_score` must strictly reflect the recall of the current set; do not include hypothetical or not-yet-discovered concepts in this score.
+*   **Recall Proxy:** Judge how completely the direct prerequisite space of the <research_concept> is covered by <canonical_candidates>. Use `coverage_score` as canonical prerequisite sufficiency for this concept under <prereq_scope_advice>. 
+    *   **Coverage gap format:** In `coverage_gap`, explicitly state `SUFFICIENT` or `INSUFFICIENT` and list the top missing immediate blockers (if any).
 *   **Gap Analysis:** Consider the five prerequisite types (Definitional, Structural, Taxonomic, Procedural, Other) as described in <prerequisite_types> when thinking about missing blocks.
 *   **Exploration Strategy:** Propose impactful exploratory areas to address identified coverage gaps. Aim for diverse perspectives and clever discovery strategies to improve the set's recall in future iterations.
+*   **Note:** The candidates that dont have an evaluation can be considered as already confirmed/rejected as prerequisites. You must account for them in the coverage assessment.
 
 ### Output Protocol
 *   **Format:** Return **JSON only**. No prose or markdown.

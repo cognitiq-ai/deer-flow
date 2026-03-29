@@ -48,7 +48,7 @@ Use this as the first stop when you have a specific runtime question.
 - `src/kg/agent_working_graph.py::find_prerequisites_path`
 - `src/kg/agent_working_graph.py::prerequisite_path_strengths`
 - parent-group all-or-none budget packing is implemented in `criteria_check`
-- `src/config/configuration.py::Configuration` (`max_focus_concepts`, `max_iteration_main`, `min_path_confidence_product`, `max_awg_nodes_total`)
+- `src/config/configuration.py::Configuration` (`max_focus_concepts`, `max_iteration_main`, `min_path_confidence_product`, `max_awg_nodes_total`, `max_new_prereqs`, `max_total_prereqs`)
 
 ### "Where is intent coverage mapped and enforced?"
 
@@ -66,6 +66,18 @@ Use this as the first stop when you have a specific runtime question.
 - `src/kg/personalization/nodes.py::discard_pruned_concept`
 - `src/kg/personalization/nodes.py::route_after_personalization_prereq_policy`
 - `src/orchestrator/kg.py::criteria_check`
+
+### "Where is prerequisite scope advice generated and consumed?"
+
+- `src/kg/personalization/schemas.py::PrereqPolicy.prereq_scope_advice`
+- `src/kg/personalization/prompts.py::personalization_prereq_policy_instructions`
+- `src/kg/personalization/nodes.py::personalization_prereq_policy`
+- `src/kg/prerequisites/prompts.py::initial_prerequisite_research_plan_instructions`
+- `src/kg/prerequisites/prompts.py::external_prerequisites_instructions`
+- `src/kg/prerequisites/prompts.py::prerequisite_coverage_instructions`
+- `src/kg/prerequisites/nodes.py::initial_prerequisite_research`
+- `src/kg/prerequisites/nodes.py::_get_external_prerequisites`
+- `src/kg/prerequisites/nodes.py::_evaluate_prerequisite_global`
 
 ### "Where is novelty saturation computed?"
 

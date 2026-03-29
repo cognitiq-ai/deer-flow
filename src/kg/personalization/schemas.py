@@ -166,7 +166,9 @@ class PrereqPolicy(BaseModel):
     max_new_prereqs: Optional[int] = Field(
         default=None,
         ge=0,
-        description="Maximum number of new prerequisite concepts to add (required and >0 when action=limit).",
+        description=(
+            "Maximum number of new prerequisite concepts to add when action=limit."
+        ),
     )
     max_search_queries: Optional[int] = Field(
         default=None,
@@ -177,6 +179,13 @@ class PrereqPolicy(BaseModel):
         default=None,
         ge=0,
         description="Optional cap for extracted URLs in prerequisite discovery for this concept.",
+    )
+    prereq_scope_advice: str = Field(
+        default=None,
+        description=(
+            "Concise guidance on prerequisite scope for this concept (e.g., what to "
+            "prioritize or deprioritize) to steer canonical prerequisite coverage/evaluation."
+        ),
     )
     novelty_saturated: bool = Field(
         default=False,

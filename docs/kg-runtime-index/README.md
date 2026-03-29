@@ -40,6 +40,11 @@ The runtime now includes stronger expansion controls:
 - Focus selection includes structural path-strength filtering (`min_path_confidence_product`).
 - Session loop includes a hard AWG node budget (`max_awg_nodes_total`) with time-aware defaults.
 - Prerequisite merge computes post-finalization novelty/dedup saturation and carries it forward to stop future local expansion.
+- Prerequisite expansion uses explicit caps: `max_new_prereqs` (new candidates) and `max_total_prereqs` (total per-concept prerequisite edges in session AWG).
+- Personalization policy applies minimal deterministic overrides for prerequisite slots (`stop` when slots are exhausted) and bounded expansion (`expand -> limit`).
+- Personalization emits `prereq_scope_advice` that is passed into prerequisite planning/discovery/coverage prompts to prioritize search while preserving canonical prerequisite coverage semantics.
+- Concept research now starts with eager related-concept inference and overlap-based duplicate short-circuit before full profile research.
+- KG4 consolidation includes focus->defined merge reconciliation to prevent stale seed/focus stubs from parallel snapshot resurrection.
 
 ## Documentation Conventions
 

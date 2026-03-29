@@ -61,7 +61,9 @@ def _get_prereq_policy(state: ConceptResearchState):
 
 
 def _apply_prereq_personalization_policy(
-    state: ConceptResearchState, prerequisite_state: ConceptPrerequisiteState
+    state: ConceptResearchState,
+    prerequisite_state: ConceptPrerequisiteState,
+    max_new_prereqs: Optional[int] = None,
 ) -> ConceptPrerequisiteState:
     """
     Apply per-concept prerequisite policy:
@@ -76,6 +78,8 @@ def _apply_prereq_personalization_policy(
     # Enforce max_new_prereqs when limiting (only for discovered canonical prerequisites).
     if getattr(policy, "action", None) == "limit":
         max_new = int(getattr(policy, "max_new_prereqs", 0) or 0)
+        if max_new_prereqs and max_new_prereqs > 0:
+            max_new = min(max_new, max_new_prereqs)
         if max_new <= 0 or not prerequisite_state.canonical:
             return prerequisite_state
 
@@ -119,10 +123,17 @@ def initial_prerequisite_research(
     # Initialize LLM
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
+    overlay = getattr(state, "personalization_overlay", None)
+    policy = getattr(overlay, "prereq_policy", None)
+    prereq_scope_advice = (
+        getattr(policy, "prereq_scope_advice", None)
+        or "No additional scope advice; prioritize immediate canonical blockers first."
+    )
 
     formatted_prompt = initial_prerequisite_research_plan_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
         top_queries=max_queries,
+        prereq_scope_advice=prereq_scope_advice,
     )
     # Curate minimal context: reuse the established concept profile if available.
     curated_context = curate_messages(
@@ -155,6 +166,7 @@ def initial_prerequisite_research(
         return {
             "messages": messages,
             "action_plans": [action_plan],
+            "research_mode": "prerequisites",
         }
     except Exception as e:  # noqa: BLE001
         return {
@@ -166,6 +178,7 @@ def initial_prerequisite_research(
                     AIMessage(content=f"Error: {e}"),
                 ],
             ),
+            "research_mode": "prerequisites",
         }
 
 
@@ -207,6 +220,8 @@ def _get_existing_prerequisites(
                 for profile in prerequisite_state.accepted
             ]
         ),
+        max_new_prereqs_cap=getattr(configurable, "max_new_prereqs", 0)
+        or getattr(configurable, "max_new_prereqs", 0),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -296,6 +311,8 @@ def _get_improved_prerequisites(
         pendings_str=to_yaml([cand.profile for cand in prerequisite_state.pending]),
         confirms_str=to_yaml([cand.profile for cand in prerequisite_state.accepted]),
         rejects_str=to_yaml([cand.profile for cand in prerequisite_state.rejected]),
+        max_new_prereqs_cap=getattr(configurable, "max_new_prereqs", 0)
+        or getattr(configurable, "max_new_prereqs", 0),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -361,6 +378,13 @@ def _get_external_prerequisites(
 ) -> tuple[ConceptPrerequisiteState, MessageStore]:
     """Helper: surface new external prerequisite candidates from broader research."""
 
+    overlay = getattr(state, "personalization_overlay", None)
+    policy = getattr(overlay, "prereq_policy", None)
+    prereq_scope_advice = (
+        getattr(policy, "prereq_scope_advice", None)
+        or "No additional scope advice; prioritize immediate canonical blockers first."
+    )
+
     external_prereq_prompt = external_prerequisites_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
         coverage_str=to_yaml(
@@ -369,6 +393,9 @@ def _get_external_prerequisites(
         pendings_str=to_yaml([cand.profile for cand in prerequisite_state.pending]),
         confirms_str=to_yaml([cand.profile for cand in prerequisite_state.accepted]),
         rejects_str=to_yaml([cand.profile for cand in prerequisite_state.rejected]),
+        prereq_scope_advice=prereq_scope_advice,
+        max_new_prereqs_cap=getattr(configurable, "max_new_prereqs", 0)
+        or getattr(configurable, "max_new_prereqs", 0),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -450,6 +477,8 @@ def _organize_prerequisites(
             ]
         ),
         rejects_str=to_yaml([cand.profile for cand in prerequisite_state.rejected]),
+        max_new_prereqs_cap=getattr(configurable, "max_new_prereqs", 0)
+        or getattr(configurable, "max_new_prereqs", 0),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -560,7 +589,11 @@ def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -
     )
 
     # 5. Apply per-concept personalization caps/filters if present.
-    prerequisite_state = _apply_prereq_personalization_policy(state, prerequisite_state)
+    # prerequisite_state = _apply_prereq_personalization_policy(
+    #     state,
+    #     prerequisite_state,
+    #     max_new_prereqs=getattr(configurable, "max_new_prereqs", None),
+    # )
 
     result = {
         "messages": message_store,
@@ -656,10 +689,21 @@ def _evaluate_prerequisite_global(
     ):
         return prerequisite_state, message_store
 
+    overlay = getattr(state, "personalization_overlay", None)
+    policy = getattr(overlay, "prereq_policy", None)
+    prereq_scope_advice = (
+        getattr(policy, "prereq_scope_advice", None)
+        or "No additional scope advice; evaluate canonical prerequisite sufficiency."
+    )
+
     prerequisite_coverage_prompt = prerequisite_coverage_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
+        prereq_scope_advice=prereq_scope_advice,
         candidates_str=to_yaml(
             [cand.profile for cand in prerequisite_state.canonical.values()]
+        ),
+        confirms_str=to_yaml(
+            [profile.model_dump(include={"name", "definition"}) for profile in prerequisite_state.accepted]
         ),
     )
     # Curate the minimal context for this call:
@@ -1039,6 +1083,17 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
 
     dedup_hits = 0
     new_stubs = 0
+    hard_cap = getattr(configurable, "max_new_prereqs", 0)
+    total_cap = getattr(configurable, "max_total_prereqs", 0)
+    limit_reached = False
+    total_limit_reached = False
+    overlay = getattr(state, "personalization_overlay", None)
+    policy = getattr(overlay, "prereq_policy", None)
+    existing_rels = awg_context.get_relationships_by_source(
+        state.concept.id, RelationshipType.HAS_PREREQUISITE
+    )
+    remaining_total_slots = max(total_cap - len(existing_rels), 0)
+    remaining_discovered_slots = hard_cap
 
     # Merge all accepted candidates as HAS_PREREQUISITE relationships
     for profile in prereq_state.accepted:
@@ -1061,10 +1116,34 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
             dedup_hits += 1
         # Create new stub node
         else:
+            if (
+                remaining_discovered_slots is not None
+                and remaining_discovered_slots <= 0
+            ):
+                limit_reached = True
+                continue
+            if remaining_total_slots is not None and remaining_total_slots <= 0:
+                total_limit_reached = True
+                continue
             prereq_node = ConceptNode(name=profile.concept.name)
             awg_context.add_node(prereq_node)
             target_id = prereq_node.id
             new_stubs += 1
+            if remaining_discovered_slots is not None:
+                remaining_discovered_slots -= 1
+
+        if remaining_total_slots is not None and remaining_total_slots <= 0:
+            total_limit_reached = True
+            continue
+        existing_rel = any(
+            rel.target_node_id == target_id
+            for rel in awg_context.get_relationships_by_source(
+                state.concept.id, RelationshipType.HAS_PREREQUISITE
+            )
+        )
+        if existing_rel:
+            dedup_hits += 1
+            continue
 
         # Create the relationship
         prereq_rel = Relationship(
@@ -1076,6 +1155,8 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
             discovery_count=1,
         )
         awg_context.add_relationship(prereq_rel)
+        if remaining_total_slots is not None:
+            remaining_total_slots -= 1
 
     denom = dedup_hits + new_stubs
     dedup_rate = (dedup_hits / denom) if denom else 0.0
@@ -1089,6 +1170,10 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
     warnings = list(getattr(state, "personalization_warnings", []) or [])
     if overlay is not None:
         reason = overlay.prereq_policy.reason
+        if limit_reached:
+            warnings.append("prereq_cap_reached_max_new_prereqs")
+        if total_limit_reached:
+            warnings.append("prereq_total_cap_reached_session_awg")
         if novelty_saturated:
             reason = (
                 f"{reason} (Post-merge saturation: novelty_rate={novelty_rate:.2f} "
