@@ -18,6 +18,8 @@ from src.kg.state import (
 from src.kg.utils import llm_with_retry, to_yaml
 from src.llms.llm import get_embedding_model, get_llm_by_type
 
+DEFAULT_DUPLICATE_OVERLAP_THRESHOLD = 0.75
+
 
 def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """LangGraph node that searches for related concepts in PKG."""
@@ -41,6 +43,7 @@ def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) ->
             definition_embedding,
             limit=3,
             similarity_threshold=0.5,
+            node_type_filter=["Concept"],
         )
         # Get related concepts from PKG
         related_concepts = [
@@ -85,6 +88,9 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
 
     # Get the config
     configurable = Configuration.from_runnable_config(config)
+    duplicate_overlap_threshold = getattr(
+        configurable, "duplicate_overlap_threshold", DEFAULT_DUPLICATE_OVERLAP_THRESHOLD
+    )
     # Initialization
     concept_a, concept_b = state.concept_a, state.concept_b
     rel_types = state.relationship_types or [
@@ -111,22 +117,28 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
         inference: InferredRelationship = llm_with_retry(
             llm, RelationshipModel, infer_rel_prompt
         )
+        overlap_ratio = max(min(float(inference.overlap_ratio), 1.0), 0.0)
+        overlap_suggests_duplicate = overlap_ratio >= duplicate_overlap_threshold
 
         # Check if a relationship was found / is strong enough
         if (
             inference.relationship_type == RelationshipType.NO_RELATIONSHIP.code
             or inference.confidence < 0.5
-        ):
+        ) and not overlap_suggests_duplicate:
             return {"relationships": []}
 
-        # Determine source and target based on the inferred direction
-        if inference.direction == 1:
+        # Force duplicate semantics when overlap exceeds threshold.
+        if overlap_suggests_duplicate:
+            rel_type = RelationshipType.IS_DUPLICATE_OF
             src, tar = concept_a.id, concept_b.id
         else:
-            src, tar = concept_b.id, concept_a.id
-
-        # Convert code string -> RelationshipType enum member
-        rel_type = RelationshipType[inference.relationship_type]
+            # Determine source and target based on the inferred direction
+            if inference.direction == 1:
+                src, tar = concept_a.id, concept_b.id
+            else:
+                src, tar = concept_b.id, concept_a.id
+            # Convert code string -> RelationshipType enum member
+            rel_type = RelationshipType[inference.relationship_type]
 
         # Create the relationship
         rels = [
@@ -169,6 +181,10 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
     """LangGraph node that merges related concepts into the AWG."""
 
     # Prepare working variables
+    configurable = Configuration.from_runnable_config(config)
+    duplicate_overlap_threshold = getattr(
+        configurable, "duplicate_overlap_threshold", DEFAULT_DUPLICATE_OVERLAP_THRESHOLD
+    )
     awg_context = state.awg_context
     pkg_interface = PKGInterface()
     concept_defined = state.concept.model_copy(
@@ -181,21 +197,15 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
     # Ensure the defined concept exists in AWG
     awg_context.add_node(concept_defined)
 
-    duplicate = None
+    duplicate_candidates = []
+    related_by_id = {rel.concept_b.id: rel.concept_b for rel in state.related_concepts}
     for relationship in state.relationships:
         concept_id = (
             relationship.target_node_id
             if relationship.source_node_id == concept_defined.id
             else relationship.source_node_id
         )
-        concept = next(
-            (
-                rel.concept_b
-                for rel in state.related_concepts
-                if rel.concept_b.id == concept_id
-            ),
-            None,
-        )
+        concept = related_by_id.get(concept_id)
         if concept is None:
             continue
         awg_context.add_node(concept)
@@ -205,31 +215,68 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         elif relationship.type == RelationshipType.IS_TYPE_OF:
             awg_context.add_relationship(relationship)
         elif relationship.type == RelationshipType.IS_DUPLICATE_OF:
-            if duplicate is None or duplicate.confidence < relationship.confidence:
-                duplicate = relationship
-
-    if duplicate:
-        duplicate_id = (
-            duplicate.target_node_id
-            if duplicate.source_node_id == concept_defined.id
-            else duplicate.source_node_id
-        )
-        duplicate_concept = pkg_interface.get_node_by_id(duplicate_id)
-        if duplicate_concept:
-            duplicate_subgraph = pkg_interface.fetch_subgraph(
-                [duplicate_concept.id], depth=1
+            overlap_ratio = (
+                getattr(getattr(relationship, "profile", None), "overlap_ratio", 0.0)
+                or 0.0
             )
-            awg_context.merge_awg(duplicate_subgraph)
+            if overlap_ratio < duplicate_overlap_threshold:
+                continue
+            duplicate_candidates.append((relationship, concept, overlap_ratio))
 
-            # Merge duplicate concept into the defined concept in AWG
-            awg_context.merge_concepts(duplicate_concept.id, concept_defined.id)
-            # Update reference to the merged node
-            concept_defined = awg_context.get_node(duplicate_concept.id)
+    merged_duplicate = False
+    if duplicate_candidates:
+        # Prefer anchoring merges to concepts that already exist in PKG.
+        candidate_rows = []
+        for relationship, concept, overlap_ratio in duplicate_candidates:
+            pkg_node = pkg_interface.get_node_by_id(concept.id)
+            in_pkg = concept.exists_in_pkg or pkg_node is not None
+            candidate_rows.append(
+                {
+                    "relationship": relationship,
+                    "concept": concept,
+                    "overlap_ratio": overlap_ratio,
+                    "in_pkg": in_pkg,
+                    "pkg_node": pkg_node,
+                }
+            )
+
+        # If any candidate is in PKG, force anchor selection from that subset.
+        anchor_pool = [row for row in candidate_rows if row["in_pkg"]] or candidate_rows
+        anchor_row = max(
+            anchor_pool,
+            key=lambda row: (row["overlap_ratio"], row["relationship"].confidence),
+        )
+        anchor_concept = anchor_row["concept"]
+        anchor_id = anchor_concept.id
+        anchor_node = anchor_row["pkg_node"] or anchor_concept
+        if anchor_node:
+            anchor_subgraph = pkg_interface.fetch_subgraph(
+                [anchor_id], depth=1, node_type_filter=["Concept"]
+            )
+            awg_context.merge_awg(anchor_subgraph)
+            awg_context.add_node(anchor_node)
+
+            if concept_defined.id != anchor_id:
+                awg_context.merge_concepts(anchor_id, concept_defined.id)
+            concept_defined = awg_context.get_node(anchor_id)
+            merged_duplicate = True
+
+            for row in candidate_rows:
+                candidate_id = row["concept"].id
+                if candidate_id == anchor_id:
+                    continue
+                candidate_subgraph = pkg_interface.fetch_subgraph(
+                    [candidate_id], depth=1, node_type_filter=["Concept"]
+                )
+                awg_context.merge_awg(candidate_subgraph)
+                if awg_context.get_node(candidate_id):
+                    awg_context.merge_concepts(anchor_id, candidate_id)
+                    concept_defined = awg_context.get_node(anchor_id)
 
     return {
         "awg_context": awg_context,
         "concept": concept_defined,
-        "is_duplicate": duplicate is not None,
+        "is_duplicate": merged_duplicate,
         "research_mode": "prerequisites",
         "iteration_number": 0,
     }

@@ -24,6 +24,11 @@ class InferredRelationship(BaseModel):
     confidence: float = Field(
         ge=0.0, le=1.0, description="Strength of the relationship (0.0-1.0)"
     )
+    overlap_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Estimated semantic overlap between concepts A and B (0.0-1.0). Higher values indicate stronger conceptual equivalence.",
+    )
     sources: List[EvidenceAtom] = Field(
         default_factory=list,
         description="Sources from the profiles of the concepts that support the relationship",

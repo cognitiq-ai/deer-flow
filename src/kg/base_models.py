@@ -242,6 +242,7 @@ class RelationshipProfile(BaseModel):
     rationale: str
     confidence: float
     sources: List[EvidenceAtom]
+    overlap_ratio: Optional[float] = None
     classification: Optional[str] = None
 
     def merge(self, other: "RelationshipProfile") -> None:
@@ -253,6 +254,12 @@ class RelationshipProfile(BaseModel):
             self.rationale = other.rationale
             self.sources = other.sources
             self.classification = other.classification
+        # Preserve the strongest available overlap estimate.
+        if other.overlap_ratio is not None:
+            if self.overlap_ratio is None:
+                self.overlap_ratio = other.overlap_ratio
+            else:
+                self.overlap_ratio = max(self.overlap_ratio, other.overlap_ratio)
 
 
 class Relationship(BaseModel):

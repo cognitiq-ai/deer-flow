@@ -638,21 +638,74 @@ class PKGInterface:
 
         return result
 
-    def fetch_subgraph(self, node_ids: List[str], depth: int = 2) -> AgentWorkingGraph:
+    def fetch_subgraph(
+        self,
+        node_ids: List[str],
+        depth: int = 2,
+        node_type_filter: Optional[Union[str, List[str]]] = None,
+        edge_type_filter: Optional[List[str]] = None,
+    ) -> AgentWorkingGraph:
         """Fetch a relevant subgraph from Neo4j."""
 
         working_graph = AgentWorkingGraph()
+
+        normalized_node_types = None
+        if node_type_filter:
+            if isinstance(node_type_filter, str):
+                node_type_values = [node_type_filter]
+            else:
+                node_type_values = list(node_type_filter)
+
+            normalized_node_types = [
+                str(node_type).strip().lower()
+                for node_type in node_type_values
+                if isinstance(node_type, str) and str(node_type).strip()
+            ]
+
+        normalized_edge_types = None
+        if edge_type_filter:
+            if isinstance(edge_type_filter, str):
+                edge_type_values = [edge_type_filter]
+            else:
+                edge_type_values = list(edge_type_filter)
+
+            normalized_edge_types = []
+            for edge_type in edge_type_values:
+                if isinstance(edge_type, RelationshipType):
+                    normalized_edge_types.append(edge_type.code.lower())
+                elif isinstance(edge_type, str) and edge_type.strip():
+                    normalized_edge_types.append(edge_type.strip().lower())
+
+            if not normalized_edge_types:
+                normalized_edge_types = None
 
         # Fetch relevant nodes and their relationships
         query = """
         MATCH path = (n:Concept)-[*0..{depth}]-(related:Concept)
         WHERE n.id IN $node_ids
-        RETURN path
         """.format(depth=depth)
+
+        params = {"node_ids": node_ids}
+
+        if normalized_node_types:
+            query += (
+                " AND all(node_in_path IN nodes(path) "
+                "WHERE toLower(node_in_path.node_type) IN $node_type_filters)"
+            )
+            params["node_type_filters"] = normalized_node_types
+
+        if normalized_edge_types:
+            query += (
+                " AND all(rel_in_path IN relationships(path) "
+                "WHERE toLower(type(rel_in_path)) IN $edge_type_filters)"
+            )
+            params["edge_type_filters"] = normalized_edge_types
+
+        query += " RETURN path"
 
         try:
             with self.neo4j_client.driver.session() as session:
-                result = session.run(query, {"node_ids": node_ids})
+                result = session.run(query, params)
 
                 # Process each path in the result
                 for record in result:
@@ -712,7 +765,8 @@ class PKGInterface:
         embedding_type: str,
         limit: int = 10,
         similarity_threshold: float = 0.7,
-        node_type_filter: Optional[str] = None,
+        node_type_filter: Optional[Union[str, List[str]]] = None,
+        edge_type_filter: Optional[List[str]] = None,
         return_graph: bool = False,
         max_results: Optional[int] = None,
     ) -> Union[List[ConceptNode], AgentWorkingGraph]:
@@ -725,6 +779,7 @@ class PKGInterface:
             limit: Maximum number of nodes to fetch from vector index
             similarity_threshold: Minimum similarity score required
             node_type_filter: Optional filter for node type (e.g., 'concept')
+            edge_type_filter: Optional list of relationship types to include in returned graph
             return_graph: If True, return AgentWorkingGraph with relationships; if False, return List[ConceptNode]
             max_results: Optional hard limit on number of results returned (applied after similarity filtering)
 
@@ -746,15 +801,51 @@ class PKGInterface:
 
         index_name = index_map[embedding_type]
 
+        normalized_node_types = None
+        if node_type_filter:
+            if isinstance(node_type_filter, str):
+                node_type_values = [node_type_filter]
+            else:
+                node_type_values = list(node_type_filter)
+
+            normalized_node_types = [
+                str(node_type).strip().lower()
+                for node_type in node_type_values
+                if isinstance(node_type, str) and str(node_type).strip()
+            ]
+
+        normalized_edge_types = None
+        if edge_type_filter:
+            if isinstance(edge_type_filter, str):
+                edge_type_values = [edge_type_filter]
+            else:
+                edge_type_values = list(edge_type_filter)
+
+            normalized_edge_types = []
+            for edge_type in edge_type_values:
+                if isinstance(edge_type, RelationshipType):
+                    normalized_edge_types.append(edge_type.code.lower())
+                elif isinstance(edge_type, str) and edge_type.strip():
+                    normalized_edge_types.append(edge_type.strip().lower())
+
+            if not normalized_edge_types:
+                normalized_edge_types = None
+
         # Build query with optional node type filter
         base_query = f"""
         CALL db.index.vector.queryNodes('{index_name}', $limit, $embedding)
         YIELD node, score
         WHERE score >= $similarity_threshold
         """
+        params = {
+            "embedding": embedding,
+            "similarity_threshold": similarity_threshold,
+            "limit": limit,
+        }
 
-        if node_type_filter:
-            base_query += f" AND node.node_type = '{node_type_filter}'"
+        if normalized_node_types:
+            base_query += " AND toLower(node.node_type) IN $node_type_filters"
+            params["node_type_filters"] = normalized_node_types
 
         base_query += """
         RETURN node, score
@@ -767,14 +858,7 @@ class PKGInterface:
         concepts = []
         try:
             with self.neo4j_client.driver.session() as session:
-                result = session.run(
-                    base_query,
-                    {
-                        "embedding": embedding,
-                        "similarity_threshold": similarity_threshold,
-                        "limit": limit,
-                    },
-                )
+                result = session.run(base_query, params)
 
                 # Process each node in the result
                 for record in result:
@@ -800,10 +884,19 @@ class PKGInterface:
                     rel_query = """
                     MATCH (n:Concept)-[r]->(m:Concept)
                     WHERE n.id IN $node_ids AND m.id IN $node_ids
+                    """
+
+                    rel_params = {"node_ids": node_ids}
+
+                    if normalized_edge_types:
+                        rel_query += " AND toLower(type(r)) IN $edge_type_filters"
+                        rel_params["edge_type_filters"] = normalized_edge_types
+
+                    rel_query += """
                     RETURN r, n, m
                     """
 
-                    rel_result = session.run(rel_query, {"node_ids": node_ids})
+                    rel_result = session.run(rel_query, rel_params)
 
                     # Process each relationship
                     for record in rel_result:
@@ -842,14 +935,20 @@ class PKGInterface:
         definition_embedding: List[float],
         limit: int = 10,
         similarity_threshold: float = 0.7,
+        node_type_filter: Optional[Union[str, List[str]]] = None,
+        edge_type_filter: Optional[List[str]] = None,
     ) -> AgentWorkingGraph:
         """Fetch a relevant subgraph from Neo4j using vector similarity."""
+        if node_type_filter is None:
+            node_type_filter = ["concept"]
+
         return self._vector_search(
             embedding=definition_embedding,
             embedding_type="definition",
             limit=limit,
             similarity_threshold=similarity_threshold,
-            node_type_filter="concept",
+            node_type_filter=node_type_filter,
+            edge_type_filter=edge_type_filter,
             return_graph=True,
         )
 

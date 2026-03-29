@@ -66,6 +66,9 @@ class Configuration:
     max_parallel_inner_loops = 10  # Maximum number of parallel inner loops
     max_research_depth = 100  # Maximum number of research depth
     min_path_confidence_product = 0.5  # Structural path-strength floor
+    duplicate_overlap_threshold: float = (
+        0.75  # Merge duplicate concepts when overlap exceeds this threshold
+    )
     max_awg_nodes_total = 30  # Hard cap for total AWG nodes in a session
     novelty_rate_min = 0.2  # Below this, mark concept saturated for prereq expansion
     max_bootstrap_rounds = 10  # Max extract-ask clarification rounds

@@ -177,6 +177,7 @@ async def inner_loop(
 
         # Prepare output
         extracted_info = {
+            "focus_concept_id": c_focus.id,
             "concept_defined": output_state.concept.model_dump(),
             "awg_context": output_state.awg_context.model_dump(),
             "concept_profile": output_state.profile.model_dump(),
@@ -236,6 +237,7 @@ def awg_consolidator(
     failed_count = 0
     defined_concepts = []
     duplicate_concepts = []
+    focus_merge_pairs: list[tuple[str, str]] = []
 
     # Collect all AWGs and defined concepts
     for extracted_info in inner_loop_results:
@@ -259,8 +261,13 @@ def awg_consolidator(
 
         # Collect defined concepts for relationship inference
         concept_defined_data = extracted_info.get("concept_defined")
+        focus_concept_id = extracted_info.get("focus_concept_id")
         if concept_defined_data:
             concept_defined = ConceptNode(**concept_defined_data)
+            if focus_concept_id and focus_concept_id != concept_defined.id:
+                # Track focus -> canonical merge intent so we can re-apply after
+                # all inner-loop AWGs are merged (prevents stale snapshot resurrection).
+                focus_merge_pairs.append((focus_concept_id, concept_defined.id))
             if concept_defined.session_disposition == SessionDispositionState.PRUNED:
                 skipped_count += 1
                 session_log.log(
@@ -286,6 +293,31 @@ def awg_consolidator(
                         "status": concept_defined.status,
                     },
                 )
+
+    # Step 1.5: Reconcile focus-node merges across parallel snapshots.
+    # Parallel inner-loop outputs are merged from the same starting AWG snapshot.
+    # If one loop merged focus node A -> B, another loop can still carry stale A.
+    # Re-apply focus->defined merges here so stale stubs are deleted and edges
+    # (including FULFILLS_GOAL) are rewired to the merged concept.
+    if focus_merge_pairs:
+        reconciled_merges = 0
+        for focus_id, defined_id in focus_merge_pairs:
+            if focus_id == defined_id:
+                continue
+            focus_node = consolidated_awg.get_node(focus_id)
+            defined_node = consolidated_awg.get_node(defined_id)
+            if focus_node and defined_node:
+                consolidated_awg.merge_concepts(defined_id, focus_id)
+                reconciled_merges += 1
+        if reconciled_merges > 0:
+            session_log.log(
+                "INFO",
+                f"KG4: Reconciled {reconciled_merges} focus-node merges after AWG merge",
+                {
+                    "tracked_pairs": len(focus_merge_pairs),
+                    "applied_pairs": reconciled_merges,
+                },
+            )
 
     session_log.log(
         "INFO",
