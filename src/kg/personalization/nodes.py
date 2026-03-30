@@ -516,7 +516,7 @@ def personalization_prereq_policy(
 
     warnings = list(state.personalization_warnings or [])
     hard_cap = getattr(configurable, "max_new_prereqs", 0)
-    total_cap = getattr(configurable, "max_total_prereqs", 0)    
+    total_cap = getattr(configurable, "max_total_prereqs", 0)
     existing_prereq_nodes = state.awg_context.get_target_neighbors(
         state.concept.id, RelationshipType.HAS_PREREQUISITE
     )

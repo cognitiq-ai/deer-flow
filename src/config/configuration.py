@@ -58,7 +58,7 @@ class Configuration:
     max_search_queries = 3  # Maximum search queries per iteration
     max_extract_urls = 2  # Maximum URLs to extract per iteration
     max_new_prereqs = 5  # Hard cap on new prerequisite concepts
-    max_total_prereqs =  12  # Hard cap on total prerequisites
+    max_total_prereqs = 12  # Hard cap on total prerequisites
     max_iter_until_extraction = 3  # Iterations before enabling content extraction
     min_confidence = 0.7  # Minimum confidence threshold for concept research
     max_iteration_main = 5  # Maximum number of main iterations

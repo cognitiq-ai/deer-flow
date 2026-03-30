@@ -1,21 +1,23 @@
-import uuid
 from datetime import datetime
 from typing import List
 
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import RunnableConfig, Send
 from pydantic import ValidationError
 
 from src.config.configuration import Configuration
 from src.db.pkg_interface import PKGInterface
-from src.kg.base_models import ConceptNode, Relationship, RelationshipType
+from src.kg.base_models import Relationship, RelationshipType
+from src.kg.message_store import make_message_entry
 from src.kg.relationships.prompts import infer_relationships_instructions
 from src.kg.relationships.schemas import InferredRelationship
 from src.kg.state import (
+    ConceptProfile,
     ConceptResearchState,
     InferRelationshipsState,
     InferRelationshipState,
 )
-from src.kg.utils import llm_with_retry, to_yaml
+from src.kg.utils import format_message, llm_with_retry, to_yaml
 from src.llms.llm import get_embedding_model, get_llm_by_type
 
 DEFAULT_DUPLICATE_OVERLAP_THRESHOLD = 0.75
@@ -24,17 +26,18 @@ DEFAULT_DUPLICATE_OVERLAP_THRESHOLD = 0.75
 def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """LangGraph node that searches for related concepts in PKG."""
 
-    # Generate embedding for definition and search PKG for related concepts
+    # Generate embedding for lightweight concept context and search PKG.
     try:
         embeddings = get_embedding_model()
         concept = state.concept
-        if not concept.definition_embedding:
-            definition_embedding = embeddings.embed_query(concept.definition)
+        definition_text = concept.definition or concept.summary or concept.name
+        if concept.definition_embedding:
+            definition_embedding = concept.definition_embedding
+        else:
+            definition_embedding = embeddings.embed_query(definition_text)
         concept = concept.model_copy(
             update={
                 "definition_embedding": definition_embedding,
-                "profile": state.profile.concept,
-                "evaluation": state.profile.evaluation,
             }
         )
 
@@ -49,7 +52,7 @@ def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) ->
         related_concepts = [
             InferRelationshipState(concept_a=concept, concept_b=concept_)
             for concept_ in list(relevant_subgraph.nodes.values())
-            if concept.profile and state.profile
+            if concept_.id != concept.id
         ]
 
         return {
@@ -106,8 +109,8 @@ def infer_relationship(state: InferRelationshipState, config: RunnableConfig) ->
 
     # Build the prompt
     infer_rel_prompt = infer_relationships_instructions.format(
-        concept_a_str=to_yaml(concept_a.profile),
-        concept_b_str=to_yaml(concept_b.profile),
+        concept_a_str=to_yaml(concept_a.model_dump(include=["name", "definition"])),
+        concept_b_str=to_yaml(concept_b.model_dump(include=["name", "definition"])),
         types_str=to_yaml([rel.code for rel in rel_types]),
     )
     rels = []
@@ -177,6 +180,21 @@ def route_after_related(
     return "merge_related_concepts"
 
 
+def route_after_eager_related(
+    state: ConceptResearchState, config: RunnableConfig
+) -> str:
+    """
+    Route immediately after eager relationship merge:
+    - If duplicate was merged, skip profile research.
+    - Otherwise continue normal profile generation.
+    """
+    if getattr(state, "is_duplicate", False):
+        if getattr(state, "personalization_request", None) is None:
+            return "initial_prerequisite_research"
+        return "personalization_preprocess"
+    return "initial_profile_research"
+
+
 def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """LangGraph node that merges related concepts into the AWG."""
 
@@ -190,8 +208,16 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
     concept_defined = state.concept.model_copy(
         update={
             "updated_at": datetime.now(),
-            "profile": state.profile.concept,
-            "evaluation": state.profile.evaluation,
+            "profile": (
+                state.profile.concept
+                if getattr(state, "profile", None)
+                else state.concept.profile
+            ),
+            "evaluation": (
+                state.profile.evaluation
+                if getattr(state, "profile", None)
+                else state.concept.evaluation
+            ),
         }
     )
     # Ensure the defined concept exists in AWG
@@ -273,10 +299,34 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
                     awg_context.merge_concepts(anchor_id, candidate_id)
                     concept_defined = awg_context.get_node(anchor_id)
 
-    return {
+    profile_state = getattr(state, "profile", None)
+    profile_messages = None
+    if merged_duplicate and concept_defined and concept_defined.profile:
+        profile_state = ConceptProfile(
+            concept=concept_defined.profile,
+            evaluation=concept_defined.evaluation,
+        )
+        profile_messages = make_message_entry(
+            "propose_profile",
+            "profile_generation",
+            [
+                HumanMessage(
+                    content="Reuse merged canonical concept profile from duplicate match."
+                ),
+                AIMessage(
+                    content=format_message(
+                        "profile_generation", to_yaml(concept_defined.profile)
+                    )
+                ),
+            ],
+        )
+
+    output = {
         "awg_context": awg_context,
         "concept": concept_defined,
         "is_duplicate": merged_duplicate,
-        "research_mode": "prerequisites",
-        "iteration_number": 0,
+        "profile": profile_state,
     }
+    if profile_messages is not None:
+        output["messages"] = profile_messages
+    return output

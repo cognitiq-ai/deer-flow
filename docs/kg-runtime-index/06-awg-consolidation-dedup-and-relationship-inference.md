@@ -1,6 +1,6 @@
 # AWG Consolidation, Dedup, Relationship Inference
 
-Last reviewed: 2026-03-18  
+Last reviewed: 2026-03-30  
 Runtime path: KG4  
 Primary files: `src/orchestrator/kg.py`, `src/kg/agent_working_graph.py`, `src/kg/builder.py`, `src/kg/relationships/nodes.py`
 
@@ -16,7 +16,17 @@ Primary files: `src/orchestrator/kg.py`, `src/kg/agent_working_graph.py`, `src/k
   - reconstruct `AgentWorkingGraph` from `awg_context`
   - merge into `consolidated_awg` via `merge_awg(...)`
   - collect `concept_defined`
+  - collect `(focus_concept_id -> concept_defined.id)` pairs when they differ
 - Empty extracted results are counted as failures and lower consolidation status.
+
+### 1.5) Reconcile focus merges across parallel snapshots
+
+- Inner loops run in parallel from a shared AWG snapshot baseline.
+- A concept merged inside one inner-loop output can be reintroduced by stale node state from another output.
+- Consolidator re-applies merge intent pairs `(focus_concept_id -> concept_defined.id)` after AWG merge:
+  - merges `focus` into `defined` via `merge_concepts(defined, focus)`
+  - rewires incident relationships (including `FULFILLS_GOAL`) to the canonical node
+  - removes resurrected stale focus stubs.
 
 ### 2) Stub dedup
 
@@ -43,6 +53,8 @@ Primary files: `src/orchestrator/kg.py`, `src/kg/agent_working_graph.py`, `src/k
     - otherwise higher confidence node
   - merge via `merge_concepts(...)`
   - track dropped duplicate nodes
+
+Note: KG3 now performs eager duplicate/overlap merge per concept before profile synthesis. KG4 duplicate handling remains the cross-concept consolidation pass.
 
 ### 5) Commit candidate construction
 
@@ -71,6 +83,8 @@ Primary files: `src/orchestrator/kg.py`, `src/kg/agent_working_graph.py`, `src/k
 
 - Core consolidator:
   - `src/orchestrator/kg.py::awg_consolidator`
+- Inner-loop output contract:
+  - `src/orchestrator/kg.py::inner_loop` (`focus_concept_id`, nullable `concept_profile`)
 - Infer-relationship graph:
   - `src/kg/builder.py::create_infer_relationship_graph`
   - `src/kg/relationships/nodes.py::infer_relationship`
@@ -86,6 +100,7 @@ Primary files: `src/orchestrator/kg.py`, `src/kg/agent_working_graph.py`, `src/k
   - semantic dedup on `(source, target, type)` in `merge_relationship`
 - Concept dedup:
   - exact stub name dedup in consolidator step
+  - focus->defined reconciliation step to prevent stale snapshot resurrection
   - inferred duplicate merge using `IS_DUPLICATE_OF`
 - Post-merge cleanup:
   - remove self-loops

@@ -1,7 +1,6 @@
 from typing import List
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import RunnableConfig, Send
 
 from src.kg.personalization.nodes import (
     discard_pruned_concept,
@@ -12,7 +11,6 @@ from src.kg.personalization.nodes import (
     personalization_preprocess,
     personalization_prereq_policy,
     route_after_personalization_prereq_policy,
-    route_after_personalization_router,
 )
 from src.kg.prerequisites.nodes import (
     action_prerequisites,
@@ -33,6 +31,7 @@ from src.kg.relationships.nodes import (
     get_related_concepts,
     infer_relationship,
     merge_related_concepts,
+    route_after_eager_related,
     route_after_related,
     send_to_infer_relationship,
 )
@@ -80,12 +79,7 @@ def create_concept_research_graph():
     builder.add_node("merge_prerequisites", merge_prerequisites)
 
     # Add edges
-    builder.add_edge(START, "initial_profile_research")
-    builder.add_conditional_edges(
-        "initial_profile_research",
-        route_after_action,
-        ["web_search", "content_extractor", "collect_research"],
-    )
+    builder.add_edge(START, "get_related_concepts")
     builder.add_edge("web_search", "collect_research")
     builder.add_edge("content_extractor", "collect_research")
     builder.add_conditional_edges(
@@ -97,7 +91,11 @@ def create_concept_research_graph():
     builder.add_conditional_edges(
         "evaluate_profile",
         profile_completed,
-        ["action_profile", "get_related_concepts"],
+        [
+            "action_profile",
+            "personalization_preprocess",
+            "initial_prerequisite_research",
+        ],
     )
     builder.add_conditional_edges(
         "action_profile",
@@ -112,8 +110,17 @@ def create_concept_research_graph():
     builder.add_edge("infer_relationship", "merge_related_concepts")
     builder.add_conditional_edges(
         "merge_related_concepts",
-        route_after_personalization_router,
-        ["personalization_preprocess", "initial_prerequisite_research"],
+        route_after_eager_related,
+        [
+            "initial_profile_research",
+            "personalization_preprocess",
+            "initial_prerequisite_research",
+        ],
+    )
+    builder.add_conditional_edges(
+        "initial_profile_research",
+        route_after_action,
+        ["web_search", "content_extractor", "collect_research"],
     )
     builder.add_edge("personalization_preprocess", "personalization_fit")
     builder.add_edge("personalization_fit", "personalization_mode")

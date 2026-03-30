@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from src.kg.prerequisites.schemas import ConceptPrerequisite
 from src.kg.profile.schemas import ConceptProfileEvaluation, ConceptProfileOutput
@@ -166,6 +166,7 @@ class ConceptNode(BaseModel):
             return getattr(self.evaluation, "confidence_score", 0.0)
         return 0.0
 
+    @computed_field
     @property
     def definition(self) -> str:
         """

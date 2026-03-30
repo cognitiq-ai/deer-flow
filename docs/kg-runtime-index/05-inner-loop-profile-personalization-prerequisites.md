@@ -1,6 +1,6 @@
 # Inner Loop: Profile, Personalization, Prerequisites
 
-Last reviewed: 2026-03-22  
+Last reviewed: 2026-03-30  
 Runtime path: KG3 per-concept processing  
 Primary files: `src/orchestrator/kg.py`, `src/kg/builder.py`, `src/kg/profile/nodes.py`, `src/kg/research/nodes.py`, `src/kg/relationships/nodes.py`, `src/kg/personalization/nodes.py`, `src/kg/prerequisites/nodes.py`, `src/kg/state.py`
 
@@ -17,54 +17,67 @@ For each focus concept, `inner_loop(...)` runs `concept_research_graph.stream(..
 
 Graph definition lives in `src/kg/builder.py::create_concept_research_graph`.
 
-### Phase A: Initial profile research
+### Phase A: Eager related-concept/duplicate check (new front of pipeline)
 
-1. `initial_profile_research`
-2. `route_after_action` -> `web_search` and/or `content_extractor` fanout (or direct `collect_research`)
-3. `collect_research`
-4. `route_after_research` -> `propose_profile`
-5. `evaluate_profile`
-6. `profile_completed`:
-   - incomplete -> `action_profile` -> back to research fanout
-   - complete -> `get_related_concepts`
-
-### Phase B: Related concept/relationship handling
-
-7. `get_related_concepts`
-8. `route_after_related`
+1. `get_related_concepts` (lightweight concept context; no full profile required)
+2. `route_after_related`
    - if related concepts found: fanout `infer_relationship` then `merge_related_concepts`
    - else: `merge_related_concepts`
+3. `route_after_eager_related`:
+   - duplicate merged -> skip profile and jump to personalization/prerequisite phase
+   - no duplicate -> continue to profile research
+
+### Phase B: Profile research (conditional; only when no eager duplicate short-circuit)
+
+4. `initial_profile_research`
+5. `route_after_action` -> `web_search` and/or `content_extractor` fanout (or direct `collect_research`)
+6. `collect_research`
+7. `route_after_research` -> `propose_profile`
+8. `evaluate_profile`
+9. `profile_completed`:
+   - incomplete -> `action_profile` -> back to research fanout
+   - complete -> direct to personalization/prerequisite phase (no late relationship pass)
 
 ### Phase C: Personalization branch
 
-9. `route_after_personalization_router`
-   - no personalization request -> `initial_prerequisite_research`
-   - otherwise:
-     - `personalization_preprocess`
-     - `personalization_fit`
-     - `personalization_mode`
-     - `personalization_delivery`
-     - `personalization_assessment`
-     - `personalization_prereq_policy`
-10. `route_after_personalization_prereq_policy`
+10. `personalization_preprocess` (only if personalization request present)
+11. `personalization_fit`
+12. `personalization_mode`
+13. `personalization_delivery`
+14. `personalization_assessment`
+15. `personalization_prereq_policy`
+16. `route_after_personalization_prereq_policy`
    - disposition `pruned` -> `discard_pruned_concept` -> `END`
    - action `stop` -> `merge_prerequisites`
    - else -> `initial_prerequisite_research`
 
 ### Phase D: Prerequisite discovery loop
 
-11. `initial_prerequisite_research`
-12. `route_after_action` -> web/extract fanout
-13. `collect_research`
-14. `route_after_research` -> `propose_prerequisites`
-15. `evaluate_prerequisites`
-16. `prerequisites_completed`
+17. `initial_prerequisite_research`
+18. `route_after_action` -> web/extract fanout
+19. `collect_research`
+20. `route_after_research` -> `propose_prerequisites`
+21. `evaluate_prerequisites`
+22. `prerequisites_completed`
    - incomplete -> `action_prerequisites` -> back to research fanout
    - complete -> `merge_prerequisites` -> `END`
 
 ## Node Responsibilities by Step
 
-### Step 4: Initial profile research
+### Step 4: Eager duplicate/overlap handling
+
+- Related concept retrieval + inference:
+  - `relationships/nodes.py::get_related_concepts`
+  - `relationships/nodes.py::infer_relationship`
+  - `relationships/nodes.py::merge_related_concepts`
+  - `relationships/nodes.py::route_after_eager_related`
+- Behavior notes:
+  - compares lightweight/symmetric concept views for both A and B
+  - emits and uses `overlap_ratio` for duplicate gating
+  - duplicate merge anchor prefers PKG node when available
+  - when eager duplicate merge succeeds, profile research is skipped
+
+### Step 5: Initial profile research (conditional)
 
 - Planning/research:
   - `profile/nodes.py::initial_profile_research`
@@ -76,7 +89,7 @@ Graph definition lives in `src/kg/builder.py::create_concept_research_graph`.
   - `profile/nodes.py::evaluate_profile`
   - `profile/nodes.py::profile_completed`
 
-### Step 5: Personalization overlays
+### Step 6: Personalization overlays
 
 - Routing and generation:
   - `personalization/nodes.py::route_after_personalization_router`
@@ -104,7 +117,7 @@ Hard constraints implemented in code include:
 - policy includes `prereq_scope_advice` to steer downstream prerequisite discovery/coverage prioritization while keeping prerequisite semantics canonical.
 - per-concept `ConceptNode.session_disposition` (`active`|`stop_expand`|`pruned`) is set in personalization and controls downstream routing/selection
 
-### Step 6: Prerequisite discovery
+### Step 7: Prerequisite discovery
 
 - Initial plan:
   - `prerequisites/nodes.py::initial_prerequisite_research` (consumes `prereq_scope_advice` from personalization policy)
@@ -124,9 +137,10 @@ Hard constraints implemented in code include:
 
 `src/orchestrator/kg.py::inner_loop` returns dictionary keys:
 
+- `focus_concept_id`
 - `concept_defined`
 - `awg_context`
-- `concept_profile`
+- `concept_profile` (nullable when profile is skipped by eager duplicate short-circuit)
 - `research_mode`
 - `personalization_overlay`
 - `personalization_warnings`
@@ -141,8 +155,8 @@ On exception, returns `{}`.
 - Intended: consistent shape handling for action plans.
 - Current: in `profile/nodes.py::action_profile`, URL flattening uses `all_urls.append(url_obj.url)` then passes `urls=all_urls` into `ProfileResearchAction`; this is a shape hotspot and can drift from expected typed URL objects.
 
-- Intended: broad related-concept capture from high-quality profile state.
-- Current: `relationships/nodes.py::get_related_concepts` uses `state.definition` embedding search and broad exception fallback to empty results; relation discovery can be silently skipped.
+- Intended: early duplicate detection to avoid redundant profile work.
+- Current: eager relationship inference uses lightweight concept context and can short-circuit profile generation; sparse/failed related-concept retrieval still falls back to normal profile path.
 
 - Intended: personalization controls all downstream prerequisite behavior.
 - Current: strong controls are implemented with deterministic post-check corrections driven by structured LLM outputs (scope/constraints, in-scope/intent gates, and novelty saturation), while softer preference fields remain advisory.
@@ -151,7 +165,7 @@ On exception, returns `{}`.
 
 - LLM failures in profile/personalization/prerequisite nodes -> fallback decisions and warnings, pipeline continues.
 - Search/crawl failures -> error messages in message store; lower evidence density.
-- Related-concept inference failures -> no extra relationships, reduced consolidation opportunities.
+- Eager related-concept inference failures -> no short-circuit and full profile path runs (more cost, but safe fallback).
 - Prerequisite loops may stop early due to iteration cap (`max_iteration_main`) before ideal coverage.
 
 ## Related Modules

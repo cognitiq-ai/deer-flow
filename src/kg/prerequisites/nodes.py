@@ -703,7 +703,10 @@ def _evaluate_prerequisite_global(
             [cand.profile for cand in prerequisite_state.canonical.values()]
         ),
         confirms_str=to_yaml(
-            [profile.model_dump(include={"name", "definition"}) for profile in prerequisite_state.accepted]
+            [
+                profile.model_dump(include={"name", "definition"})
+                for profile in prerequisite_state.accepted
+            ]
         ),
     )
     # Curate the minimal context for this call:

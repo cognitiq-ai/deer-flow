@@ -72,7 +72,11 @@ def initial_profile_research(
             node_key=("action_profile", "profile_action_research"),
             action=action,
         )
-        return {"messages": messages, "action_plans": [action_plan]}
+        return {
+            "messages": messages,
+            "action_plans": [action_plan],
+            "research_mode": "profile",
+        }
     except Exception as e:
         error_messages = make_message_entry(
             "action_profile",
@@ -81,6 +85,7 @@ def initial_profile_research(
         )
         return {
             "messages": error_messages,
+            "research_mode": "profile",
         }
 
 
@@ -204,7 +209,9 @@ def profile_completed(state: ConceptResearchState, config: RunnableConfig) -> st
     score = getattr(getattr(state.profile, "evaluation", None), "confidence_score", 0.0)
     is_complete = score >= configurable.reflection_confidence
     if depth_exceeded or is_complete:
-        return "get_related_concepts"
+        if getattr(state, "personalization_request", None) is None:
+            return "initial_prerequisite_research"
+        return "personalization_preprocess"
 
     return "action_profile"
 

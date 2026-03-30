@@ -90,6 +90,7 @@ class ConceptResearchState(BaseModel):
     relationships: Annotated[List[Relationship], operator.add] = Field(
         default_factory=list
     )
+    is_duplicate: bool = False
 
     # Actions/Results
     # Action plans for the current iteration (profile or prerequisites)

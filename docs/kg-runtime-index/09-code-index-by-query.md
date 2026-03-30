@@ -1,6 +1,6 @@
 # Code Index by Query
 
-Last reviewed: 2026-03-26  
+Last reviewed: 2026-03-30  
 Purpose: retrieval index for human reviewers
 
 Use this as the first stop when you have a specific runtime question.
@@ -91,6 +91,7 @@ Use this as the first stop when you have a specific runtime question.
 - `src/kg/profile/nodes.py::evaluate_profile`
 - `src/kg/profile/nodes.py::profile_completed`
 - `src/kg/research/nodes.py` (search/extract routing and execution)
+- `src/kg/research/nodes.py::route_after_research` (uses `state.research_mode`; mode is stamped at phase entry nodes)
 
 ### "Where is personalization applied?"
 
@@ -117,11 +118,20 @@ Use this as the first stop when you have a specific runtime question.
 - `src/kg/relationships/nodes.py::get_related_concepts`
 - `src/kg/relationships/nodes.py::infer_relationship`
 - `src/kg/relationships/nodes.py::merge_related_concepts`
+- `src/kg/relationships/nodes.py::route_after_eager_related`
 - `src/kg/builder.py::create_infer_relationship_graph`
+
+### "Where is eager duplicate short-circuit implemented?"
+
+- `src/kg/builder.py::create_concept_research_graph` (`START -> get_related_concepts`, early merge routing)
+- `src/kg/relationships/nodes.py::route_after_eager_related`
+- `src/kg/relationships/nodes.py::merge_related_concepts` (PKG-preferred anchor, overlap threshold, profile hydration)
+- `src/kg/profile/nodes.py::profile_completed` (no late relationship stage)
 
 ### "Where is AWG merge and dedup done?"
 
 - `src/orchestrator/kg.py::awg_consolidator`
+- `src/orchestrator/kg.py::inner_loop` (emits `focus_concept_id` for consolidator reconciliation)
 - `src/kg/agent_working_graph.py::merge_awg`
 - `src/kg/agent_working_graph.py::merge_relationship`
 - `src/kg/agent_working_graph.py::merge_concepts`

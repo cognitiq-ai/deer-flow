@@ -1,6 +1,6 @@
 # Interactive KG Runtime Index
 
-Last reviewed: 2026-03-22  
+Last reviewed: 2026-03-30  
 Runtime path: `main_kg.py --interactive`  
 Primary entrypoint: `main_kg.py`
 
@@ -24,7 +24,7 @@ This directory is a living, code-accurate documentation index for the interactiv
 - Step 1 (Bootstrap Q&A) -> `02-bootstrap-state-machine.md`
 - Step 2 (Seed concepts) -> `03-bootstrap-to-awg-seeding.md`
 - Step 3 (Identify focus) -> `04-main-loop-focus-selection.md`
-- Step 4 (Initial profile research) -> `05-inner-loop-profile-personalization-prerequisites.md`
+- Step 4 (Eager relationship check + conditional profile research) -> `05-inner-loop-profile-personalization-prerequisites.md`
 - Step 5 (Personalization) -> `05-inner-loop-profile-personalization-prerequisites.md`
 - Step 6 (Prerequisite discovery) -> `05-inner-loop-profile-personalization-prerequisites.md`
 - Step 7 (AWG consolidation) -> `06-awg-consolidation-dedup-and-relationship-inference.md`
