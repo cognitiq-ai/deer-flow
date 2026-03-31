@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from src.config.configuration import Configuration
 from src.db.pkg_interface import PKGInterface
-from src.kg.base_models import Relationship, RelationshipType
+from src.kg.base_models import Relationship, RelationshipType, SessionDispositionState
 from src.kg.message_store import make_message_entry
 from src.kg.relationships.prompts import infer_relationships_instructions
 from src.kg.relationships.schemas import InferredRelationship
@@ -49,10 +49,16 @@ def get_related_concepts(state: ConceptResearchState, config: RunnableConfig) ->
             node_type_filter=["Concept"],
         )
         # Get related concepts from PKG
+        pruned_ids = {
+            node.id
+            for node in state.awg_context.nodes.values()
+            if getattr(node, "session_disposition", None)
+            == SessionDispositionState.PRUNED
+        }
         related_concepts = [
             InferRelationshipState(concept_a=concept, concept_b=concept_)
             for concept_ in list(relevant_subgraph.nodes.values())
-            if concept_.id != concept.id
+            if concept_.id != concept.id and concept_.id not in pruned_ids
         ]
 
         return {
@@ -221,7 +227,7 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         }
     )
     # Ensure the defined concept exists in AWG
-    awg_context.add_node(concept_defined)
+    awg_context.merge_node(concept_defined)
 
     duplicate_candidates = []
     related_by_id = {rel.concept_b.id: rel.concept_b for rel in state.related_concepts}
@@ -234,7 +240,7 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
         concept = related_by_id.get(concept_id)
         if concept is None:
             continue
-        awg_context.add_node(concept)
+        awg_context.merge_node(concept)
 
         if relationship.type == RelationshipType.IS_PART_OF:
             awg_context.add_relationship(relationship)
@@ -280,7 +286,7 @@ def merge_related_concepts(state: ConceptResearchState, config: RunnableConfig) 
                 [anchor_id], depth=1, node_type_filter=["Concept"]
             )
             awg_context.merge_awg(anchor_subgraph)
-            awg_context.add_node(anchor_node)
+            awg_context.merge_node(anchor_node)
 
             if concept_defined.id != anchor_id:
                 awg_context.merge_concepts(anchor_id, concept_defined.id)

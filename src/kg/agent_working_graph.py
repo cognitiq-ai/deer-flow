@@ -98,13 +98,24 @@ class AgentWorkingGraph(BaseModel):
         ]
 
     def get_target_neighbors(
-        self, node_id: str, rel_type: Optional[RelationshipType] = None
+        self,
+        node_id: str,
+        rel_type: Optional[RelationshipType] = None,
+        exclude_pruned: bool = True,
     ) -> List[ConceptNode]:
         """Get all neighbors of the given node."""
-        return [
-            self.get_node(r.target_node_id)
-            for r in self.get_relationships_by_source(node_id, rel_type)
-        ]
+        neighbors = []
+        for relationship in self.get_relationships_by_source(node_id, rel_type):
+            neighbor = self.get_node(relationship.target_node_id)
+            if neighbor is None:
+                continue
+            if (
+                exclude_pruned
+                and neighbor.session_disposition == SessionDispositionState.PRUNED
+            ):
+                continue
+            neighbors.append(neighbor)
+        return neighbors
 
     def delete_node(self, node_id: str) -> None:
         """Delete a node from the working graph."""
@@ -975,7 +986,7 @@ class AgentWorkingGraph(BaseModel):
         return removed_rel_ids
 
     def get_target_candidates(
-        self, node: ConceptNode, rel_type: RelationshipType
+        self, node: ConceptNode, rel_type: RelationshipType, exclude_pruned: bool = True
     ) -> List[ConceptNode]:
         """
         Return a list of nodes that are not ancestors or successors of the given node,
@@ -986,6 +997,22 @@ class AgentWorkingGraph(BaseModel):
             rel_type: The type of relationship to check
         """
         G = self.to_networkx_graph(rel_type=rel_type)
+        # Remove the goal node
+        goal_node = [node for node in self.nodes.values() if node.node_type == "goal"][
+            0
+        ]
+        if goal_node.id in G:
+            G.remove_node(goal_node.id)
+        # Remove pruned nodes
+        pruned_ids = {
+            node_id
+            for node_id, concept in self.nodes.items()
+            if concept.session_disposition == SessionDispositionState.PRUNED
+        }
+        if exclude_pruned and pruned_ids:
+            G.remove_nodes_from(pruned_ids)
+        if node.id not in G:
+            return []
         forbidden = nx.ancestors(G, node.id) | {node.id} | set(G.successors(node.id))
         return [self.get_node(j) for j in G.nodes if j not in forbidden]
 
