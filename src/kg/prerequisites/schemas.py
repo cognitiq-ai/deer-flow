@@ -1,6 +1,5 @@
 # pylint: disable=line-too-long
 
-from enum import Enum
 from typing import List, Literal, Optional, Type
 
 from pydantic import (
@@ -12,7 +11,6 @@ from pydantic import (
     model_validator,
 )
 
-from src.config import Configuration
 from src.kg.research.schemas import EvidenceAtom, ResearchUrl, SearchQuery
 from src.kg.utils import EnumDescriptor, EnumMember, PydanticEnum
 
@@ -354,6 +352,20 @@ class PrerequisiteEvaluationTaxonomy(EnumDescriptor):
         ),
     )
 
+    NOT_ESSENTIAL = EnumMember(
+        code="not_essential",
+        description=(
+            "Meaning: The candidate is a real teachable concept, but it is not necessary "
+            "to understand or perform the target at the intended level; learners can reach "
+            "the target without systematically relying on it. "
+            "Test: Counterfactual examples and authoritative learning sequences show that "
+            "the target can usually be learned successfully without first mastering this "
+            "candidate, even if the candidate is helpful background. "
+            "Example: 'History of calculus' is NOT_ESSENTIAL for 'computing derivatives' "
+            "because it may add context but is not a blocking prerequisite."
+        ),
+    )
+
     # =========================================================================
     # 3. REFINE (Node Invalid)
     # =========================================================================
@@ -431,6 +443,23 @@ class PrerequisiteCandidateEvaluation(BaseModel):
         "Must explicitly reference the definition and the criteria."
     )
 
+    scope_fit: Literal["in_scope", "peripheral", "out_of_scope"] = Field(
+        description=(
+            "Learner-scope fit of this candidate after canonical validity is judged. "
+            "`in_scope` means it is an immediate blocker for the current learner/goal "
+            "slice, `peripheral` means it is lower-priority or non-blocking for the "
+            "current slice, and `out_of_scope` means it is outside the advised learner boundary."
+        )
+    )
+
+    scope_rationale: str = Field(
+        description=(
+            "Brief rationale for the learner-scope fit decision. This must explain how "
+            "the candidate relates to the current prerequisite scope advice without "
+            "changing the candidate's canonical meaning."
+        )
+    )
+
     suggestion: Optional[str] = Field(
         default=None,
         description="Corrective suggestions to refine the candidate. Required if classification is not VALID. "
@@ -452,15 +481,16 @@ class PrerequisiteCandidateEvaluation(BaseModel):
     def status(self) -> Literal["accepted", "rejected", "pending"]:
         """The status of the candidate evaluation (accepted/rejected/pending)."""
 
-        if self.classification == PrerequisiteEvaluationTaxonomy.VALID.code:
-            return "accepted"
-        if self.classification in [
-            PrerequisiteEvaluationTaxonomy.AMBIGUOUS_DEFINITION.code,
-            PrerequisiteEvaluationTaxonomy.COMPOUND_UNIT.code,
-            PrerequisiteEvaluationTaxonomy.IS_INDIRECT.code,
-            PrerequisiteEvaluationTaxonomy.TOO_COARSE_OR_FINE.code,
-        ]:
-            return "pending"
+        if self.scope_fit in ["in_scope", "peripheral"]:
+            if self.classification == PrerequisiteEvaluationTaxonomy.VALID.code:
+                return "accepted"
+            if self.classification in [
+                PrerequisiteEvaluationTaxonomy.AMBIGUOUS_DEFINITION.code,
+                PrerequisiteEvaluationTaxonomy.COMPOUND_UNIT.code,
+                PrerequisiteEvaluationTaxonomy.IS_INDIRECT.code,
+                PrerequisiteEvaluationTaxonomy.TOO_COARSE_OR_FINE.code,
+            ]:
+                return "pending"
 
         return "rejected"
 

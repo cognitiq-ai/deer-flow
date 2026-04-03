@@ -2,10 +2,8 @@
 
 import uuid
 from copy import deepcopy
-from datetime import datetime
-from typing import List, Optional
+from typing import List
 
-from bs4 import Tag
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import RunnableConfig
 
@@ -60,48 +58,12 @@ def _get_prereq_policy(state: ConceptResearchState):
     return getattr(overlay, "prereq_policy", None)
 
 
-def _apply_prereq_personalization_policy(
+def _get_prereq_scope_advice(
     state: ConceptResearchState,
-    prerequisite_state: ConceptPrerequisiteState,
-    max_new_prereqs: Optional[int] = None,
-) -> ConceptPrerequisiteState:
-    """
-    Apply per-concept prerequisite policy:
-    - filter by scope exclusions if enabled
-    - prefer inclusions in ordering when limiting
-    - cap discovered canonical candidates when action == limit
-    """
+    default: str,
+) -> str:
     policy = _get_prereq_policy(state)
-    if policy is None:
-        return prerequisite_state
-
-    # Enforce max_new_prereqs when limiting (only for discovered canonical prerequisites).
-    if getattr(policy, "action", None) == "limit":
-        max_new = int(getattr(policy, "max_new_prereqs", 0) or 0)
-        if max_new_prereqs and max_new_prereqs > 0:
-            max_new = min(max_new, max_new_prereqs)
-        if max_new <= 0 or not prerequisite_state.canonical:
-            return prerequisite_state
-
-        discovered_items = []
-        keep = {}
-        for key, profile in prerequisite_state.canonical.items():
-            concept = getattr(profile, "concept", None)
-            source = getattr(concept, "source", None)
-            if source == "discovered":
-                conf = float(getattr(concept, "confidence", 0.0) or 0.0)
-                discovered_items.append((conf, key, profile))
-            else:
-                keep[key] = profile
-
-        # Confidence-only ordering; upstream LLM policy decides semantic preferences.
-        discovered_items.sort(key=lambda t: t[0], reverse=True)
-        for _, key, profile in discovered_items[:max_new]:
-            keep[key] = profile
-
-        prerequisite_state.canonical = keep
-
-    return prerequisite_state
+    return getattr(policy, "prereq_scope_advice", None) or default
 
 
 def initial_prerequisite_research(
@@ -115,19 +77,14 @@ def initial_prerequisite_research(
     """
     # Get the config
     configurable = Configuration.from_runnable_config(config)
-    policy = _get_prereq_policy(state)
     max_queries = configurable.max_search_queries
-    if policy is not None and getattr(policy, "max_search_queries", None) is not None:
-        max_queries = min(max_queries, int(policy.max_search_queries))
 
     # Initialize LLM
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
-    overlay = getattr(state, "personalization_overlay", None)
-    policy = getattr(overlay, "prereq_policy", None)
-    prereq_scope_advice = (
-        getattr(policy, "prereq_scope_advice", None)
-        or "No additional scope advice; prioritize immediate canonical blockers first."
+    prereq_scope_advice = _get_prereq_scope_advice(
+        state,
+        "No additional scope advice; prioritize immediate canonical blockers first.",
     )
 
     formatted_prompt = initial_prerequisite_research_plan_instructions.format(
@@ -216,7 +173,7 @@ def _get_existing_prerequisites(
         ),
         confirms_str=to_yaml(
             [
-                profile.model_dump(include={"name", "definition"})
+                profile.concept.model_dump(include={"name", "definition"})
                 for profile in prerequisite_state.accepted
             ]
         ),
@@ -378,13 +335,6 @@ def _get_external_prerequisites(
 ) -> tuple[ConceptPrerequisiteState, MessageStore]:
     """Helper: surface new external prerequisite candidates from broader research."""
 
-    overlay = getattr(state, "personalization_overlay", None)
-    policy = getattr(overlay, "prereq_policy", None)
-    prereq_scope_advice = (
-        getattr(policy, "prereq_scope_advice", None)
-        or "No additional scope advice; prioritize immediate canonical blockers first."
-    )
-
     external_prereq_prompt = external_prerequisites_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
         coverage_str=to_yaml(
@@ -393,7 +343,6 @@ def _get_external_prerequisites(
         pendings_str=to_yaml([cand.profile for cand in prerequisite_state.pending]),
         confirms_str=to_yaml([cand.profile for cand in prerequisite_state.accepted]),
         rejects_str=to_yaml([cand.profile for cand in prerequisite_state.rejected]),
-        prereq_scope_advice=prereq_scope_advice,
         max_new_prereqs_cap=getattr(configurable, "max_new_prereqs", 0)
         or getattr(configurable, "max_new_prereqs", 0),
     )
@@ -471,9 +420,9 @@ def _organize_prerequisites(
         candidates_str=to_yaml(prerequisite_state.discovered),
         confirms_str=to_yaml(
             [
-                profile.profile
-                for profile in prerequisite_state.accepted
-                if profile.source == "existing"
+                cand.profile
+                for cand in prerequisite_state.canonical.values()
+                if cand.status != "rejected"
             ]
         ),
         rejects_str=to_yaml([cand.profile for cand in prerequisite_state.rejected]),
@@ -588,13 +537,6 @@ def propose_prerequisites(state: ConceptResearchState, config: RunnableConfig) -
         message_store,
     )
 
-    # 5. Apply per-concept personalization caps/filters if present.
-    # prerequisite_state = _apply_prereq_personalization_policy(
-    #     state,
-    #     prerequisite_state,
-    #     max_new_prereqs=getattr(configurable, "max_new_prereqs", None),
-    # )
-
     result = {
         "messages": message_store,
         "prerequisites": prerequisite_state,
@@ -621,6 +563,10 @@ def _evaluate_prerequisite_candidates(
         research_concept=state.concept.with_goal(state.goal_context),
         canonicals_str=to_yaml([cand.profile for cand in candidates]),
         confirms_str=to_yaml([cand.profile for cand in prerequisite_state.accepted]),
+        prereq_scope_advice=_get_prereq_scope_advice(
+            state,
+            "No additional scope advice; keep only learner-relevant canonical blockers in scope.",
+        ),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -699,23 +645,14 @@ def _evaluate_prerequisite_global(
     prerequisite_coverage_prompt = prerequisite_coverage_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
         prereq_scope_advice=prereq_scope_advice,
-        candidates_str=to_yaml(
-            [cand.profile for cand in prerequisite_state.canonical.values()]
-        ),
-        confirms_str=to_yaml(
-            [
-                profile.model_dump(include={"name", "definition"})
-                for profile in prerequisite_state.accepted
-            ]
-        ),
+        candidates_str=to_yaml([cand.profile for cand in prerequisite_state.accepted]),
+        rejects_str=to_yaml([cand.profile for cand in prerequisite_state.rejected]),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
         MessageStore.ensure(state.messages),
         [
             ("propose_profile", "profile_generation"),
-            ("propose_prerequisites", "prerequisite_taxonomy"),
-            ("evaluate_prerequisites", "prerequisite_candidate_evaluations"),
         ],
     )
     # Build the message queue for the LLM
@@ -808,13 +745,12 @@ def evaluate_prerequisites(state: ConceptResearchState, config: RunnableConfig) 
         snapshot.best_state = None
         prerequisite_state.best_state = snapshot
     elif prerequisite_state.best_state:
-        # Restore best state + rejected candidates
-        saved_best, rejected = (
-            prerequisite_state.best_state,
-            prerequisite_state.rejected,
-        )
+        # Restore best canonical state while preserving only taxonomy rejections in
+        # the archive. Learner-scope-filtered candidates remain derived from canonical.
+        saved_best = prerequisite_state.best_state
+        rejected_archive = deepcopy(prerequisite_state.rejected)
         prerequisite_state = deepcopy(saved_best)
-        prerequisite_state.archive = rejected
+        prerequisite_state.archive = rejected_archive
         # Restore the reference
         prerequisite_state.best_state = saved_best
 
@@ -837,13 +773,8 @@ def _action_prerequisite_refinement(
     if not prerequisite_state.pending:
         return prerequisite_state, message_store
 
-    policy = _get_prereq_policy(state)
     max_queries = configurable.max_search_queries
     max_urls = configurable.max_extract_urls
-    if policy is not None and getattr(policy, "max_search_queries", None) is not None:
-        max_queries = min(max_queries, int(policy.max_search_queries))
-    if policy is not None and getattr(policy, "max_extract_urls", None) is not None:
-        max_urls = min(max_urls, int(policy.max_extract_urls))
 
     prerequisite_refinement_prompt = prerequisite_refinement_action_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
@@ -919,18 +850,17 @@ def _action_prerequisite_expansion(
     ):
         return prerequisite_state, message_store
 
-    policy = _get_prereq_policy(state)
     max_queries = configurable.max_search_queries
     max_urls = configurable.max_extract_urls
-    if policy is not None and getattr(policy, "max_search_queries", None) is not None:
-        max_queries = min(max_queries, int(policy.max_search_queries))
-    if policy is not None and getattr(policy, "max_extract_urls", None) is not None:
-        max_urls = min(max_urls, int(policy.max_extract_urls))
 
     prerequisite_expansion_prompt = prerequisite_expansion_action_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
         n_queries=max_queries,
         n_urls=max_urls,
+        prereq_scope_advice=_get_prereq_scope_advice(
+            state,
+            "No additional scope advice; expand only learner-relevant prerequisite gaps.",
+        ),
     )
     # Curate the minimal context for this call:
     curated_context = curate_messages(
@@ -1098,7 +1028,7 @@ def merge_prerequisites(state: ConceptResearchState, config: RunnableConfig) -> 
     remaining_total_slots = max(total_cap - len(existing_rels), 0)
     remaining_discovered_slots = hard_cap
 
-    # Merge all accepted candidates as HAS_PREREQUISITE relationships
+    # Merge only accepted learner-scoped candidates as HAS_PREREQUISITE relationships.
     for profile in prereq_state.accepted:
         # Check if existing prerequisite
         if isinstance(profile.concept, ConceptNode):

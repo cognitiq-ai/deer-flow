@@ -210,7 +210,16 @@ class PrerequisiteProfile(BaseModel):
             and self.source == "existing"
             and self._evaluation.status == "pending"
         ):
-            self._evaluation.status = "rejected"
+            self._evaluation = self._evaluation.model_copy(
+                update={
+                    "classification": PrerequisiteEvaluationTaxonomy.NOT_ESSENTIAL.code,
+                    "scope_rationale": (
+                        f"{self._evaluation.scope_rationale.rstrip()} "
+                        "Existing concepts cannot enter refinement; "
+                        "rejecting this candidate as non-essential."
+                    ).strip(),
+                }
+            )
 
     def __hash__(self) -> int:
         return hash(self.concept.name)
@@ -220,20 +229,31 @@ class PrerequisiteProfile(BaseModel):
 
     @computed_field(return_type=dict)
     @property
-    def profile(self) -> dict:
-        return {
-            self.concept.name: {
-                "description": self.concept.definition,
-                "rationale": getattr(self.concept, "rationale", None),
-                "prerequisite_type": getattr(self.concept, "prerequisite_type", None),
-                "evidence_summary": getattr(self.concept, "evidence_summary", None),
-                "evaluation": self.evaluation.model_dump(
-                    include={"classification", "rationale", "suggestion"}
+    def profile(self):
+        fields = [
+            "definition",
+            "rationale",
+            "prerequisite_type",
+            "evidence_summary",
+            "evaluation",
+        ]
+        profile = {}
+        for field in fields:
+            if field == "evaluation" and self.evaluation:
+                profile[field] = self.evaluation.model_dump(
+                    include={
+                        "classification",
+                        "rationale",
+                        "scope_fit",
+                        "scope_rationale",
+                        "suggestion",
+                    }
                 )
-                if self.evaluation
-                else None,
-            }
-        }
+            else:
+                concept_value = getattr(self.concept, field, None)
+                if concept_value is not None:
+                    profile[field] = concept_value
+        return {self.concept.name: profile}
 
     @computed_field(return_type=Optional[str])
     @property
@@ -252,7 +272,20 @@ class PrerequisiteProfile(BaseModel):
         if isinstance(self.concept, ConceptNode):
             return "existing"
         else:
-            return self.concept.with_source
+            return self.concept.source
+
+    @model_validator(mode="after")
+    def existing_default(self) -> "PrerequisiteProfile":
+        if isinstance(self.concept, ConceptNode):
+            self._evaluation = PrerequisiteCandidateEvaluation(
+                name=self.concept.name,
+                classification=PrerequisiteEvaluationTaxonomy.VALID.code,
+                rationale="Canonical prerequisite existing in the AWG are classified as valid by default.",
+                scope_fit="in_scope",
+                scope_rationale="Canonical prerequisite existing in the AWG are in-scope by default.",
+                confidence_score=1.0,
+            )
+        return self
 
 
 class ConceptPrerequisiteState(BaseModel):
@@ -319,7 +352,7 @@ class ConceptPrerequisiteState(BaseModel):
             if canon:
                 canon.evaluation = eval
                 # Persist rejections across iterations
-                if eval.status == "rejected":
+                if eval.status == "rejected" and canon not in self.archive:
                     self.archive.append(canon)
 
 

@@ -2,34 +2,40 @@
 # 0. Initial Prerequisites Research Planning
 initial_prerequisite_research_plan_instructions = """## Initial Prerequisites Research Planning
 
-Generate up to {top_queries} search queries to discover the most likely *direct* prerequisites for the following concept:
+You are researching to discover and organize a learning curriculum for a concept. Your task is to generate up to {top_queries} search queries to discover the most likely *direct* prerequisite concepts.
+
+Analyze <profile_generation> to understand the target research concept and its profile: 
 <research_concept>
 {research_concept}
 </research_concept>
 
-Personalization advice for prerequisite scope:
+Advice for scoping the set of prerequisite concepts to be discovered:
 <prereq_scope_advice>
 {prereq_scope_advice}
 </prereq_scope_advice>
 
-Coverage goals:
-- identify prerequisite *concepts* (definitions, properties, parent categories) required to understand the target
-- identify prerequisite *skills* (procedures, techniques, methods) required to learn/apply the target
-- surface “what to learn before X” ordering signals from curricula (syllabi, course outlines, textbooks)
-- prefer *immediate predecessors* over generic “basics”
+### Instructions
 
-### Query Formulation Strategy (use these patterns)
-- Seek blocking dependencies: what makes learning the target **impossible** if missing (not just harder).
-- Find the immediate predecessor: “right before the target” (avoid far-removed foundations; avoid `IS_INDIRECT`).
-- Include procedural skills: “how-to skills required to do X”.
-- Use curriculum signals: “syllabus before X”, “prerequisites for X”, “topics covered before X”, “course outline X prerequisites”.
-- Diversify: synonyms, entity disambiguation, boolean operators, doc types, domains, geos.
+**I. Discovery Goals:**
+*   Under the guidance of <prereq_scope_advice>, the following discovery goals should be achieved:
+    *   Identify *direct prerequisite concepts* (definitions, properties, parent categories) required to understand the <research_concept>.
+    *   Identify prerequisite *skills* (procedures, techniques, methods) required to learn/apply the <research_concept>.
+    *   Surface what to learn before <research_concept> ordering signals from curricula (syllabi, course outlines, textbooks).
+    *   Prefer *immediate predecessors* over generic basics.
 
-Rules:
-- For every query, include a `concept_name` field set to the exact `<research_concept>`.
-- Prefer intents: `map_conceptual_dependencies`, `identify_skill_dependencies`, `breakdown_into_components`, `contextualize_domain`.
-- Use <prereq_scope_advice> to prioritize what to search for first, while staying canonical and focused on direct blockers.
-- Output only JSON. No prose or markdown.
+**II. Query Formulation Strategy:**
+*   Use these patterns to formulate search queries:
+    *   Seek blocking dependencies: what makes learning the <research_concept> **impossible** if missing (not just harder).
+    *   Find the immediate predecessor: “right before the <research_concept>” (avoid far-removed foundations; avoid `IS_INDIRECT`).
+    *   Include procedural skills: “how-to skills required to do <research_concept>”.
+    *   Use curriculum signals: “syllabus before <research_concept>”, “prerequisites for <research_concept>”, “topics covered before <research_concept>”, “course outline <research_concept> prerequisites”.
+    *   Diversify: synonyms, entity disambiguation, boolean operators, doc types, domains, geos.
+
+### Output Protocol
+*   For every query, include a `concept_name` field set to the exact `<research_concept>`.
+*   Limit output to `{top_queries}` queries.
+*   Prefer intents: `map_conceptual_dependencies`, `identify_skill_dependencies`, `breakdown_into_components`, `contextualize_domain`.
+*   Output only JSON. No prose or markdown.
 """
 
 # 1. Existing Prerequisites (discovery)
@@ -55,7 +61,7 @@ Aim for units comparable in scope and complexity (but strictly distinct) from th
 ### Instructions
 
 **I. Sourcing**
-*   Select candidates exclusively from <existing_concepts>. If the list is empty or null, return an empty list. 
+*   Select candidates exclusively from <existing_concepts>. If the list is empty or null, return an empty list. The selected candidates must match on name with the concepts in <existing_concepts> exactly.
 *   Do not propose any candidates that are present in, an alias of, or overlapping with <confirmed_prerequisites>.
 
 **II. Selection Criteria**
@@ -102,10 +108,6 @@ Here is the list of rejected candidates:
 {rejects_str}
 </rejected_candidates>
 
-Personalization advice for prerequisite scope:
-<prereq_scope_advice>
-{prereq_scope_advice}
-</prereq_scope_advice>
 
 ### Instructions
 
@@ -183,7 +185,6 @@ Exclude the following candidates in your analysis and response as they are alrea
     *   **Procedural:** Skills, steps, or logical inputs necessary to perform the procedure related to the <research_concept>. 
         *   Explicitly look for "How-to" procedural skills required to perform the <research_concept> (e.g., "Matrix Multiplication" for "Linear Transformations").
 *   **Evaluation Criteria:** Follow the <prerequisite_evaluation_taxonomy> as a guide to discover the right set of prerequisite candidates.
-*   **Scope Advice:** Use <prereq_scope_advice> to prioritize what to look for first (and what to deprioritize), while keeping candidates canonical and directly prerequisite to <research_concept>.
 
 **III. Definition & Standardization**
 *   **Synthesis:** Formulate complete, self-contained profiles from the research evidence.
@@ -284,10 +285,15 @@ The following concepts have already been confirmed/covered as prerequisites:
 {confirms_str}
 </confirmed_prerequisites>
 
+Advice for evaluating whether the <canonical_candidates> are within learner-specific scope:
+<prereq_scope_advice>
+{prereq_scope_advice}
+</prereq_scope_advice>
+
 ### Instructions
 
 **I. Input Scope & Integrity**
-*   **Target:** Evaluate only <canonical_candidates> against <research_concept>.
+*   **Target:** Evaluate only <canonical_candidates> as prerequisites for the <research_concept>. Pay attention to <profile_generation> for the detailed profile including meaning, scope, examples, etc. of the <research_concept>.
 *   **Context:** Use <confirmed_prerequisites> as fixed background coverage; do not re-evaluate these items.
 *   **Evidence Scope (Critical):** Base your decision **only** on what is inside each item in <canonical_candidates>:
     *   `definition` and `description` for scope/meaning.
@@ -304,6 +310,12 @@ The following concepts have already been confirmed/covered as prerequisites:
     - `TOO_COARSE_OR_FINE` / `COMPOUND_UNIT` / `AMBIGUOUS_DEFINITION`
     - `NOT_ESSENTIAL`
     - `VALID`
+*   Judge `classification` using canonical prerequisite semantics only. Do not use <prereq_scope_advice> to change whether the concept is canonically a direct prerequisite.
+*   After assigning `classification`, separately assign:
+    - `scope_fit = in_scope` when the canonical candidate is an immediate blocker worth keeping in the learner-scoped prerequisite frontier.
+    - `scope_fit = peripheral` when the canonical candidate is valid but lower-priority or non-blocking for the current learner scope.
+    - `scope_fit = out_of_scope` when the canonical candidate may be valid but falls outside the learner-specific prerequisite boundary expressed in <prereq_scope_advice>.
+*   `scope_rationale` must explain the learner-scope judgment without changing the candidate's canonical meaning.
 
 ### Output Protocol
 *   **Format:** Return **JSON only**. No prose or markdown.
@@ -314,38 +326,43 @@ The following concepts have already been confirmed/covered as prerequisites:
 # Prerequisites global evaluation (coverage/novelty/evidence, structured)
 prerequisite_coverage_instructions = """## Prerequisites Coverage Evaluation
 
-You are analyzing the global quality of the current prerequisite concept set for the <research_concept>. Your role is to evaluate the overall coverage, and taxonomic organization/structure of the canonical prerequisite concepts in a way that can guide future actions. 
+You are evaluating the overall coverage, and taxonomic organization/structure of the current prerequisite concept set for the <research_concept> so as to guide future actions like prerequisite expansion.
 
 Analyze <profile_generation> to understand the research concept and its profile: 
 <research_concept>
 {research_concept}
 </research_concept>
 
-These are canonical concepts that have been considered for the <research_concept> and must be included in the overall coverage assessment. Note that not all of these concepts will be finalized as prerequisites.
+The following canonical prerequisite candidates are currently active for the <research_concept>:
 <canonical_candidates>
 {candidates_str}
 </canonical_candidates>
 
-Advice for prerequisite scope:
+The following canonical prerequisite candidates are already known but filtered out as either uncanonical or out of scope:
+<rejected_candidates>
+{rejects_str}
+</rejected_candidates>
+
+Advice for learner-scope and prerequisite coverage assessment:
 <prereq_scope_advice>
 {prereq_scope_advice}
 </prereq_scope_advice>
 
-Individual evaluations for limited set of candidates are available in <prerequisite_candidate_evaluations> while the rest can be considered as already confirmed/rejected as prerequisites.
 
 ### Instructions
 
 **I. Structural Quality**
-*   Analyze structural organization qualities such as orthogonality, aliasing, hierarchy, level uniformity, etc. of the <canonical_candidates>.
+*   Analyze structural organization qualities such as orthogonality, aliasing, hierarchy, level uniformity, etc. of the active canonical set in <canonical_candidates>.
 *   Group obvious aliases or near-duplicates into alias groups.
-*   Judge the distinctness and granularity of the <canonical_candidates> to assign an orthogonality score.
+*   Judge the distinctness and granularity of the active canonical set to assign an orthogonality score.
 
 **II. Coverage Assessment**
-*   **Recall Proxy:** Judge how completely the direct prerequisite space of the <research_concept> is covered by <canonical_candidates>. Use `coverage_score` as canonical prerequisite sufficiency for this concept under <prereq_scope_advice>. 
-    *   **Coverage gap format:** In `coverage_gap`, explicitly state `SUFFICIENT` or `INSUFFICIENT` and list the top missing immediate blockers (if any).
-*   **Gap Analysis:** Consider the five prerequisite types (Definitional, Structural, Taxonomic, Procedural, Other) as described in <prerequisite_types> when thinking about missing blocks.
-*   **Exploration Strategy:** Propose impactful exploratory areas to address identified coverage gaps. Aim for diverse perspectives and clever discovery strategies to improve the set's recall in future iterations.
-*   **Note:** The candidates that dont have an evaluation can be considered as already confirmed/rejected as prerequisites. You must account for them in the coverage assessment.
+*   **Scoring Target:** Use `coverage_score` as a learner-goal sufficiency score as per <prereq_scope_advice> over <canonical_candidates>. High score means the prerequisite frontier in <canonical_candidates> is sufficient to proceed for this learner and goal. It is not to be penalized if some concepts exceed the learner-scope boundary in <prereq_scope_advice> as some concepts may already exist in the prerequisite graph.
+*   **Canonicality Boundary:** Assume the concepts shown are already canonical units. <prereq_scope_advice> may change whether a canonical prerequisite should count for this learner, but must not change the concept's canonical meaning and structure.
+*   **Known Exclusions:** Treat <rejected_candidates> as known canonical prerequisites that are intentionally excluded from the learner-scoped frontier. Do not count them as missing blockers.
+*   **Coverage gap format:** In `coverage_gap`, explicitly state `SUFFICIENT` or `INSUFFICIENT` and list only the top missing immediate blockers that are still in-scope for this learner as per <prereq_scope_advice>.
+*   **Gap Analysis:** Consider the five prerequisite types (Definitional, Structural, Taxonomic, Procedural, Other) when thinking about in-scope missing blocks.
+*   **Exploration Strategy:** Propose targeted exploratory areas that would improve learner-scoped coverage next. Do not propose rediscovery of <rejected_candidates> unless the advice strongly suggests they were mis-scoped.
 
 ### Output Protocol
 *   **Format:** Return **JSON only**. No prose or markdown.
