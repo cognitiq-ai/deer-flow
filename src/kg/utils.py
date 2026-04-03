@@ -1,12 +1,14 @@
 """Utility functions for the concept research LangGraph agent."""
 
+import json
+import time
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Optional, Type, TypeVar, Union
 
 import yaml
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field, ValidationError, create_model
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 
 class EnumMember(BaseModel):
@@ -265,6 +267,21 @@ def get_current_date() -> str:
 T = TypeVar("T", bound=BaseModel)
 
 
+def _structured_output_retry_feedback(exc: BaseException, schema_name: str) -> str:
+    """User message text so the model can fix schema/validation failures on retry."""
+    lead = (
+        f"The model output did not validate as {schema_name}. "
+        "Reply again with a corrected structured response that strictly matches the schema."
+    )
+    if isinstance(exc, ValidationError):
+        try:
+            detail = json.dumps(exc.errors(), indent=2, default=str)
+        except Exception:
+            detail = str(exc)
+        return f"{lead}\n\nPydantic validation errors:\n{detail}"
+    return f"{lead}\n\nError:\n{exc!s}"
+
+
 def llm_with_retry(
     llm,
     schema_class: Type[T],
@@ -274,6 +291,9 @@ def llm_with_retry(
 ) -> T:
     """
     Get structured output from LLM with automatic retry on validation errors.
+
+    On retry, appends a HumanMessage describing the validation error so the model
+    can correct its output.
 
     Args:
         llm: The language model instance
@@ -286,32 +306,36 @@ def llm_with_retry(
         Parsed structured output of type T
 
     Raises:
-        ValidationError: If all retry attempts fail
+        ValidationError, ValueError, TypeError: If all retry attempts fail
     """
 
-    @retry(
-        stop=stop_after_attempt(max_retries),
-        wait=wait_fixed(wait_seconds),
-        retry=retry_if_exception_type((ValidationError, ValueError, TypeError)),
-        reraise=True,
-    )
-    def _get_structured_output() -> T:
-        try:
-            structured_llm = llm.with_structured_output(schema_class)
-            result = structured_llm.invoke(messages)
+    if isinstance(messages, (list, tuple)):
+        working_messages: List[Any] = list(messages)
+    else:
+        working_messages = [messages]
 
-            # Validate the result is of the expected type
+    structured_llm = llm.with_structured_output(schema_class)
+
+    for attempt in range(max_retries):
+        try:
+            result = structured_llm.invoke(working_messages)
+
             if not isinstance(result, schema_class):
-                raise ValidationError(
+                raise ValueError(
                     f"Expected {schema_class.__name__}, got {type(result).__name__}"
                 )
 
             return result
 
-        except (ValidationError, ValueError, TypeError):
-            raise
-        except Exception as e:
-            # For non-retryable exceptions, convert to ValidationError to stop retrying
-            raise ValidationError(f"Non-retryable error: {e}")
+        except (ValidationError, ValueError, TypeError) as e:
+            if attempt >= max_retries - 1:
+                raise
+            working_messages.append(
+                HumanMessage(
+                    content=_structured_output_retry_feedback(e, schema_class.__name__)
+                )
+            )
+            if wait_seconds:
+                time.sleep(wait_seconds)
 
-    return _get_structured_output()
+    raise ValueError(f"Exhausted {max_retries} attempts for {schema_class.__name__}")
