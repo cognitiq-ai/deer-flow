@@ -27,7 +27,11 @@ flowchart TD
     runInner --> consolidate["awg_consolidator()"]
     consolidate --> criteria["criteria_check()"]
     criteria --> mainLoop
-    mainLoop -->|no| finalize["build session summary"]
+    mainLoop -->|no| orderNodes["dfs_postorder() over final AWG"]
+    orderNodes --> contentGate{"enable content and ordered nodes?"}
+    contentGate -->|yes| contentBatch["generate educational content batches"]
+    contentGate -->|no| finalize["build session summary"]
+    contentBatch --> finalize
     finalize --> returnFinal["return final summary"]
 ```
 
@@ -117,8 +121,10 @@ sequenceDiagram
     participant Orch as session_orchestrator
     participant Boot as bootstrap_graph_with_memory
     participant KG4 as awg_consolidator
+    participant Content as content_generator
     participant PKG as PKGInterface
     participant Neo4j as Neo4jDB
+    participant ER as EducationalReportsRepository
 
     Main->>Orch: initial request(goal_string, thread_id)
     Orch->>Boot: stream(BootstrapState, configurable.thread_id)
@@ -135,6 +141,11 @@ sequenceDiagram
     Neo4j-->>PKG: commit results / rejections
     PKG-->>KG4: committed + rejected + errors
     KG4-->>Orch: updated_awg + consolidation_status
+    Orch->>Orch: dfs_postorder() for learning progression
+    Orch->>Content: generate per-concept educational reports
+    Content->>ER: create_report(...) for each concept
+    ER-->>Content: report IDs / persistence status
+    Content-->>Orch: success/failure results
     Orch-->>Main: final session summary
 ```
 
@@ -144,3 +155,4 @@ sequenceDiagram
 - [Entry Point and Interactive Loop](../01-entrypoint-and-interactive-loop.md)
 - [Bootstrap State Machine](../02-bootstrap-state-machine.md)
 - [Commit Paths and Checkpointing](../07-commit-paths-neo4j-and-session-checkpointing.md)
+- [Post-Expansion Ordering and Content Generation](../10-post-expansion-ordering-and-content-generation.md)

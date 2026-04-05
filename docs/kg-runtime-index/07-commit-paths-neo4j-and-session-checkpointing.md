@@ -144,5 +144,6 @@ No all-or-nothing transaction wraps the full batch at this level.
 
 - [Entry Point and Interactive Loop](./01-entrypoint-and-interactive-loop.md)
 - [AWG Consolidation and Dedup](./06-awg-consolidation-dedup-and-relationship-inference.md)
+- [Post-Expansion Ordering and Content Generation](./10-post-expansion-ordering-and-content-generation.md)
 - [Failure Modes and Gap Register](./08-failure-modes-and-gap-register.md)
 - [Runtime Diagrams](./diagrams/overview.md)

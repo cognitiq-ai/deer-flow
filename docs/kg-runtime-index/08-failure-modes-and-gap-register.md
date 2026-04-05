@@ -24,6 +24,12 @@ This module is the explicit intended-vs-current register. It is split into:
 | 8 Commit (KG + session) | durable KG commit + durable checkpoint/session | KG durable via Neo4j; bootstrap checkpoint in-memory only; session summary returned, not durably stored in this path | `commit_changes`, `build_bootstrap_graph_with_memory`, `_generate_session_summary` |
 | 9 Repeat 3-8 | iterate until convergence with progress checks | repeat loop exists; moderate default max iteration (5) can still halt before convergence on broad goals | `session_orchestrator` main while loop, `Configuration.max_iteration_main` |
 
+Post-step finalization (after Step 9) is now documented explicitly in `10-post-expansion-ordering-and-content-generation.md`:
+
+- `session_orchestrator` maps stop reasons to final statuses and gates ordering/content.
+- `dfs_postorder` computes learning progression over cycle-resolved AWG.
+- educational content generation runs per ordered concept (with filtering and persistence).
+
 ## B) Function-Level Gap Register
 
 ### Entrypoint / orchestration
@@ -60,6 +66,13 @@ This module is the explicit intended-vs-current register. It is split into:
   - Gap: on exception returns no-cycle signal, potentially weakening cycle safety under transient DB failures.
 - `src/db/pkg_interface.py::get_node_by_id`
   - Gap: broad exception collapses to `None`, masking operational failures as “not found.”
+
+### Post-expansion ordering/content finalization
+
+- `src/orchestrator/session.py::session_orchestrator`
+  - Gap: content-generation metrics/log start count use `ordered_nodes` while execution operates on filtered set (skip/pruned removed), so denominator can be misleading.
+- `src/kg/agent_working_graph.py::dfs_postorder`
+  - Gap: ordering invokes `resolve_cycles(combine=True)`, so the "ordering" phase can mutate graph structure rather than being read-only.
 
 ### Checkpoint/session persistence
 

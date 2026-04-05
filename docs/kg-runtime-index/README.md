@@ -17,9 +17,10 @@ This directory is a living, code-accurate documentation index for the interactiv
 - Read `07-commit-paths-neo4j-and-session-checkpointing.md` for persistence semantics (Neo4j + checkpointing/session outputs).
 - Read `08-failure-modes-and-gap-register.md` for explicit intended-vs-current divergences and failure taxonomy.
 - Read `09-code-index-by-query.md` as the retrieval index by intent/query.
+- Read `10-post-expansion-ordering-and-content-generation.md` for post-loop ordering, educational content generation, and final summary/status folding.
 - Read `diagrams/overview.md` for global and state-machine mermaid diagrams.
 
-## 9-Step Conceptual Flow Mapping
+## 10-Step Conceptual Flow Mapping
 
 - Step 1 (Bootstrap Q&A) -> `02-bootstrap-state-machine.md`
 - Step 2 (Seed concepts) -> `03-bootstrap-to-awg-seeding.md`
@@ -30,6 +31,7 @@ This directory is a living, code-accurate documentation index for the interactiv
 - Step 7 (AWG consolidation) -> `06-awg-consolidation-dedup-and-relationship-inference.md`
 - Step 8 (Commit: KG + session/checkpoint) -> `07-commit-paths-neo4j-and-session-checkpointing.md`
 - Step 9 (Repeat 3-8) -> `04-main-loop-focus-selection.md` + links to `05/06/07`
+- Step 10 (Post-expansion ordering + educational content + summary) -> `10-post-expansion-ordering-and-content-generation.md`
 
 ## Control Surface Update (2026-03-22)
 

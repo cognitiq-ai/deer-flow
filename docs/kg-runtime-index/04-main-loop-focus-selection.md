@@ -124,4 +124,5 @@ Default config (`Configuration`):
 
 - [Inner Loop: Profile, Personalization, Prerequisites](./05-inner-loop-profile-personalization-prerequisites.md)
 - [AWG Consolidation and Dedup](./06-awg-consolidation-dedup-and-relationship-inference.md)
+- [Post-Expansion Ordering and Content Generation](./10-post-expansion-ordering-and-content-generation.md)
 - [Failure Modes and Gap Register](./08-failure-modes-and-gap-register.md)

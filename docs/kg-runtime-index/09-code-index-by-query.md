@@ -152,6 +152,27 @@ Use this as the first stop when you have a specific runtime question.
 - `src/orchestrator/models.py::KGInterruptedResponse`
 - `src/orchestrator/models.py::KGBootstrapFailureResponse`
 
+### "How is the final learning progression order computed after expansion?"
+
+- `src/orchestrator/session.py::session_orchestrator` (post-loop `ordered_nodes` decision gate)
+- `src/kg/agent_working_graph.py::dfs_postorder`
+- `src/kg/agent_working_graph.py::resolve_cycles`
+- `src/kg/agent_working_graph.py::to_networkx_graph`
+
+### "Where is educational content generated after KG completion?"
+
+- `src/orchestrator/session.py::session_orchestrator` (batching, filtering, task dispatch, status folding)
+- `src/orchestrator/content.py::content_generator`
+- `src/orchestrator/content.py::_build_context`
+- `src/orchestrator/content.py::_generate_content`
+- `src/config/configuration.py::Configuration` (`enable_content`, `content_timeout`, `content_max_plan_iterations`, `content_max_step_num`)
+
+### "Where is generated educational content persisted?"
+
+- `src/orchestrator/content.py::content_generator`
+- `src/db/db_interface.py::EducationalReportsRepository.create_report`
+- `src/db/postgres_schema.py::PostgresSchema.create_educational_reports_table`
+
 ### "What request schema does API accept?"
 
 - `src/server/kg_request.py::KGSessionRequest`
@@ -161,6 +182,7 @@ Use this as the first stop when you have a specific runtime question.
 
 - Start-to-first-KG-handoff: `01` -> `02` -> `03`
 - Iterative processing lifecycle: `04` -> `05` -> `06` -> `07`
+- Post-expansion finalization lifecycle: `10`
 - Risk and divergence review: `08`
 - Diagram-first orientation: `diagrams/overview.md`
 
