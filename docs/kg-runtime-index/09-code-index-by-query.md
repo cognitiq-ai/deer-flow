@@ -167,6 +167,22 @@ Use this as the first stop when you have a specific runtime question.
 - `src/orchestrator/content.py::_generate_content`
 - `src/config/configuration.py::Configuration` (`enable_content`, `content_timeout`, `content_max_plan_iterations`, `content_max_step_num`)
 
+### "Where are objective-alignment and continuity output fields defined?"
+
+- `src/graph/schemas.py::ObjectiveAlignmentItem`
+- `src/graph/schemas.py::EducationalReportOutput` (`objective_alignment_map`, `uncertainty_notes`)
+
+### "Where are prerequisite assumptions constrained for educational generation?"
+
+- `src/orchestrator/content.py::_get_allowed_prerequisite_names` (AWG-derived prerequisite allow-list for prompt context)
+- `src/orchestrator/content.py::_build_context` (prerequisite recap contract + continuity instructions)
+
+### "Where is continuity/terminology/evidence/mastery-load context injected?"
+
+- `src/orchestrator/content.py::_build_context` (prerequisite recap contract, narrative anchor, terminology contract, mastery/load planning contract)
+- `src/orchestrator/content.py::_build_key_claims_dossier` (key claims from KG/profile/research artifacts)
+- `src/prompts/reporter.md` (educational style rules for objective alignment, continuity contract, and uncertainty notes)
+
 ### "Where is generated educational content persisted?"
 
 - `src/orchestrator/content.py::content_generator`

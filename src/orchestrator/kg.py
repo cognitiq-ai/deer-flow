@@ -262,9 +262,25 @@ def awg_consolidator(
 
         # Collect defined concepts for relationship inference
         concept_defined_data = extracted_info.get("concept_defined")
+        concept_profile_data = extracted_info.get("concept_profile")
         focus_concept_id = extracted_info.get("focus_concept_id")
         if concept_defined_data:
             concept_defined = ConceptNode(**concept_defined_data)
+            # Ensure canonical profile/evaluation from research output are carried
+            # into the node we commit, even if concept serialization lagged behind.
+            if isinstance(concept_profile_data, dict):
+                merged_payload = concept_defined.model_dump()
+                merged_payload["profile"] = (
+                    concept_profile_data.get("concept") or concept_defined.profile
+                )
+                merged_payload["evaluation"] = (
+                    concept_profile_data.get("evaluation") or concept_defined.evaluation
+                )
+                # Re-validate to guarantee nested profile/evaluation are model
+                # instances (not raw dicts) for downstream attribute access.
+                concept_defined = ConceptNode.model_validate(merged_payload)
+                # Keep consolidated AWG node hydrated with the same canonical payload.
+                consolidated_awg.merge_node(concept_defined)
             if focus_concept_id and focus_concept_id != concept_defined.id:
                 # Track focus -> canonical merge intent so we can re-apply after
                 # all inner-loop AWGs are merged (prevents stale snapshot resurrection).

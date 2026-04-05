@@ -78,6 +78,7 @@ class PKGInterface:
                 id=node_data["id"],
                 name=node_data.get("name"),
                 topic=node_data.get("topic", ""),
+                summary=node_data.get("summary"),
                 profile=profile_data or None,
                 evaluation=evaluation_data or None,
                 node_type=node_data.get("node_type", "concept"),

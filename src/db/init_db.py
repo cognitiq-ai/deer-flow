@@ -3,7 +3,6 @@
 PostgreSQL Database Initialization Script
 
 This script initializes the PostgreSQL database with the required setup including:
-- Database creation (if it doesn't exist)
 - Required extensions installation
 - Application schema creation (tables, indexes)
 - Verification of all components
@@ -13,10 +12,8 @@ Run this script once after setting up your PostgreSQL server.
 
 import os
 import sys
-from pathlib import Path
 from urllib.parse import urlparse
 
-import psycopg
 from dotenv import load_dotenv
 
 # Add project root to path so we can import our modules
@@ -32,76 +29,6 @@ except ImportError as e:
     print(f"❌ Import error: {e}")
     print("Please ensure you're running this script from the project root directory.")
     sys.exit(1)
-
-
-def parse_database_url(url: str) -> dict:
-    """Parse PostgreSQL database URL into components.
-
-    Args:
-        url: PostgreSQL URL (e.g., postgresql://user:pass@host:port/database)
-
-    Returns:
-        Dictionary with connection components
-    """
-    parsed = urlparse(url)
-    return {
-        "host": parsed.hostname or "localhost",
-        "port": parsed.port or 5432,
-        "username": parsed.username,
-        "password": parsed.password,
-        "database": parsed.path.lstrip("/") if parsed.path else None,
-    }
-
-
-def create_database_if_not_exists(db_url: str) -> bool:
-    """Create database if it doesn't exist.
-
-    Args:
-        db_url: Full database URL
-
-    Returns:
-        True if database was created or already exists, False on error
-    """
-    try:
-        # Parse URL to get components
-        db_config = parse_database_url(db_url)
-        target_database = db_config["database"]
-
-        if not target_database:
-            print("❌ No database name found in LANGGRAPH_CHECKPOINT_DB_URL")
-            return False
-
-        # Create connection to 'postgres' system database to check/create target database
-        system_db_url = db_url.replace(f"/{target_database}", "/postgres")
-
-        print(f"🔍 Checking if database '{target_database}' exists...")
-
-        with psycopg.connect(system_db_url, autocommit=True) as conn:
-            with conn.cursor() as cursor:
-                # Check if database exists
-                cursor.execute(
-                    "SELECT 1 FROM pg_database WHERE datname = %s", (target_database,)
-                )
-                exists = cursor.fetchone()
-
-                if exists:
-                    print(f"✅ Database '{target_database}' already exists")
-                    return True
-
-                # Create database
-                print(f"🔨 Creating database '{target_database}'...")
-                # Note: Database names cannot be parameterized, but we validate the name
-                if not target_database.replace("_", "").replace("-", "").isalnum():
-                    print(f"❌ Invalid database name: {target_database}")
-                    return False
-
-                cursor.execute(f'CREATE DATABASE "{target_database}"')
-                print(f"✅ Database '{target_database}' created successfully")
-                return True
-
-    except Exception as e:
-        print(f"❌ Error creating database: {e}")
-        return False
 
 
 def main():
@@ -128,24 +55,36 @@ def main():
         print("Example: postgresql://user:password@localhost:5432/kg_db")
         sys.exit(1)
 
-    # Step 1: Create database if it doesn't exist
-    print("\n🔧 Setting up database...")
-    if not create_database_if_not_exists(db_url):
-        print("❌ Failed to create or verify database existence")
+    parsed = urlparse(db_url)
+    target_database = parsed.path.lstrip("/") if parsed.path else None
+    if not target_database:
+        print("❌ No database name found in LANGGRAPH_CHECKPOINT_DB_URL")
+        print("Please provide a database in the connection string path.")
         sys.exit(1)
 
-    # Step 2: Connect to target database and initialize schema
-    print("\n🔌 Connecting to PostgreSQL database...")
+    # Step 1: Connect to the exact database provided in the URL
+    print("\n🔧 Setting up database...")
+    print(f"   • Target database from URL: {target_database}")
+    print("\n🔌 Connecting to PostgreSQL database from LANGGRAPH_CHECKPOINT_DB_URL...")
     try:
-        postgres_client = PostgresClient()
+        # Always use the exact connection string passed by the user/config.
+        postgres_client = PostgresClient(database_url=db_url)
 
         # Test connection
         with postgres_client.connection.cursor() as cursor:
-            cursor.execute("SELECT 1 as test")
+            cursor.execute("SELECT current_database() as current_db, 1 as test")
             result = cursor.fetchone()
             assert result["test"] == 1
+            if result.get("current_db") != target_database:
+                print(
+                    "⚠️  Connected database does not match connection string path: "
+                    f"expected '{target_database}', got '{result.get('current_db')}'."
+                )
 
-        print("✅ Successfully connected to PostgreSQL database")
+        print(
+            "✅ Successfully connected to PostgreSQL database "
+            f"'{result.get('current_db', target_database)}'"
+        )
 
     except PostgresConnectionError as e:
         print(f"❌ Failed to connect to PostgreSQL: {e}")
@@ -158,7 +97,7 @@ def main():
         sys.exit(1)
 
     try:
-        # Initialize schema manager
+        # Step 2: Initialize schema manager in the same target database.
         print("\n📋 Initializing schema manager...")
         schema = PostgresSchema(postgres_client.connection)
         print("✅ Schema manager initialized")

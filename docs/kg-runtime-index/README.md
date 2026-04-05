@@ -1,6 +1,6 @@
 # Interactive KG Runtime Index
 
-Last reviewed: 2026-03-30  
+Last reviewed: 2026-04-05  
 Runtime path: `main_kg.py --interactive`  
 Primary entrypoint: `main_kg.py`
 
@@ -48,6 +48,12 @@ The runtime now includes stronger expansion controls:
 - Concept research now starts with eager related-concept inference and overlap-based duplicate short-circuit before full profile research.
 - KG4 consolidation includes focus->defined merge reconciliation to prevent stale seed/focus stubs from parallel snapshot resurrection.
 - KG4 now adds a pre-commit PKG dedup pass (exact-name + definition-vector candidate retrieval + LLM duplicate inference) to guard canonical PKG quality under parallel multi-session writes.
+- Post-expansion educational generation now enforces structured pedagogical contracts:
+  - objective alignment map in output,
+  - continuity contracts (prerequisite recap + narrative anchor + terminology consistency),
+  - evidence dossier grounding + `uncertainty_notes`,
+  - profile-driven mastery/load planning inputs,
+  - prerequisite assumptions communicated via input context and objective alignment dependencies.
 
 ## Documentation Conventions
 

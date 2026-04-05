@@ -244,6 +244,10 @@ Structure your report in the following format:
    - **Include active moments**: Questions, exercises, or "try this" prompts every few paragraphs
    - **Address confusion proactively**: Call out and correct common misconceptions
    - **Enable immediate application**: Provide concrete examples learners can use right away
+   - **Honor objective alignment mapping**: Ensure each generated objective is observable/measurable, aligned to the learner goal, and paired with prerequisite dependencies already assumed covered
+   - **Honor prerequisite continuity contract**: Use prerequisite names from runtime context when stating prior assumptions and alignment dependencies
+   - **Ground claims transparently**: Use the runtime evidence dossier for key claims and record unresolved ambiguity in `uncertainty_notes`
+   - **Follow upstream mastery/load constraints**: Treat provided profile outcomes, misconceptions, exemplars, and cognitive-load estimates as authoritative planning inputs
    {% else %}
    - Use a professional tone.
    {% endif %}

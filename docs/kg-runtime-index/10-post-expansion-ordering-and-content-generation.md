@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-04-05  
 Runtime path: post-main-loop finalization after KG expansion  
-Primary files: `src/orchestrator/session.py`, `src/kg/agent_working_graph.py`, `src/orchestrator/content.py`, `src/db/db_interface.py`, `src/config/configuration.py`
+Primary files: `src/orchestrator/session.py`, `src/kg/agent_working_graph.py`, `src/orchestrator/content.py`, `src/graph/schemas.py`, `src/prompts/reporter.md`, `src/db/db_interface.py`, `src/config/configuration.py`
 
 This module documents what happens after iterative KG expansion/consolidation is done for the session and the runtime transitions to learning progression ordering and educational content generation.
 
@@ -92,11 +92,18 @@ Execution strategy:
 `content_generator` runs a three-step pipeline:
 
 1. **Build educational context** (`_build_context`)
-   - goal framing
-   - current concept and definition
-   - prerequisites already covered (from ordered prefix)
-   - upcoming concepts
+   - goal framing, current concept, prerequisites already covered, and upcoming concepts
    - graph relationship context (`HAS_PREREQUISITE`, `IS_TYPE_OF`, `IS_PART_OF`)
+   - continuity contracts:
+     - prerequisite recap contract (AWG-backed allowed prerequisite names only)
+     - narrative anchor (position in progression, bridge from previous concept, setup for next)
+     - terminology continuity contract (canonical concept names)
+   - evidence dossier (key claims from concept profile, relationship rationale, and known knowledge gaps)
+   - mastery + load planning contract from existing concept profile:
+     - outcomes (with bloom and success criteria)
+     - misconceptions (with correction hints)
+     - exemplars (worked example/counterexample)
+     - cognitive-load estimates (difficulty + effort minutes)
    - personalization directives (`mode`, delivery, assessment, prereq policy)
 2. **Generate report** (`_generate_content`)
    - build deer-flow graph (`build_graph_with_memory`)
@@ -109,6 +116,22 @@ Execution strategy:
 
 If generation fails -> returns `{"success": False, ...}`.  
 If persistence fails after generation -> also returns `{"success": False, ...}`.
+
+### Educational Output Contract (Current)
+
+Educational reports are now expected to include:
+
+- `content`
+- `learning_objectives`
+- `objective_alignment_map` (measurable objective statements + prerequisite dependencies)
+- `uncertainty_notes` (explicit ambiguity/conflict/missing-evidence notes)
+- `practical_applications`
+- `solved_examples`
+- `exercises`
+- `further_reading`
+- `summary`
+
+Mastery/load artifacts are **input-authoritative** from the concept profile (not re-generated as a separate output block).
 
 ### Step 6: Aggregate Results and Final Status Folding
 
@@ -148,11 +171,14 @@ This summary is returned to caller.
   - `src/orchestrator/content.py::content_generator`
 - Context construction and deer-flow generation:
   - `src/orchestrator/content.py::_build_context`
+  - `src/orchestrator/content.py::_build_key_claims_dossier`
   - `src/orchestrator/content.py::_generate_content`
 - Educational report persistence:
   - `src/db/db_interface.py::EducationalReportsRepository.create_report`
 - Content-related runtime knobs:
   - `src/config/configuration.py::Configuration`
+- Educational output schema:
+  - `src/graph/schemas.py::EducationalReportOutput`
 
 ## Intended vs Current Gap
 

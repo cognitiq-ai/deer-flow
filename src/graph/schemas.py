@@ -21,8 +21,8 @@ class Quiz(BaseModel):
     question_type: str = Field(
         description="Type of question: multiple_choice, short_answer, true_false, essay"
     )
-    options: Optional[List[str]] = Field(
-        default=None, description="Options for multiple choice questions"
+    options: List[str] = Field(
+        description="Options for multiple choice questions (if any) else leave empty list"
     )
     correct_answer: str = Field(description="The correct answer or solution")
     explanation: str = Field(
@@ -55,6 +55,9 @@ class EducationalReportOutput(BaseModel):
     )
     learning_objectives: List[str] = Field(
         description="A list of clear, measurable learning objectives for the entire learning journey."
+    )
+    objective_alignment_map: List[str] = Field(
+        description="Observable, measurable objective for this concept, explicitly aligned to the learner's overall goal."
     )
     practical_applications: List[str] = Field(
         description="A list of real-world applications and use cases demonstrating the concepts. Leave empty if not applicable."

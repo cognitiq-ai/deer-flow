@@ -181,12 +181,15 @@ accessibility_needs: {accessibility_needs_yaml}
 - Expand only if the concept blocks progress AND depth is not overview.
 - Stop if expansion would push into exclusions or low relevance.
 - Stop if the concept does not support any required intent facet unless it clearly blocks progress.
-- Assess sufficiency against `<goal_outcome>` and `<goal_success_criteria>` using existing prerequisites first.
-- **Sufficient means:** the current existing prerequisites already cover the immediate blockers required to achieve the success criteria at the requested depth; no additional prerequisite is needed to proceed.
+- **Existing-set-first test (required):** evaluate the current `<existing_prerequisites_yaml>` as the baseline plan for achieving `<goal_outcome>` and `<goal_success_criteria>`.
+- Be conservative about adding prerequisites: avoid nitpicky/completionist additions that are "nice to know" but not required to make meaningful progress toward the main learning goal.
+- **Sufficient means:** the existing prerequisites already cover the immediate blockers needed to achieve the success criteria at the requested depth; no additional prerequisite is required right now.
 - If sufficient, choose `stop`.
+- Only expand if there is a concrete blocker that remains unmet by the existing set.
 - If expansion is needed, prefer `limit` with only immediate high-impact blockers.
+- **Gap-only rule for `prereq_scope_advice`:** if expansion/limit is chosen, describe only what is missing beyond the existing prerequisite set (delta-only guidance). Do not restate, broaden, or re-justify prerequisites already present in `<existing_prerequisites_yaml>`.
 - If action is `limit`, `max_new_prereqs` must be present and >0.
-- Populate `prereq_scope_advice` with a short scope note for downstream prerequisite coverage (what to prioritize/deprioritize). It should consider any prerequisites already in `<existing_prerequisites_yaml>`.
+- Populate `prereq_scope_advice` with a short, strict scope note for downstream coverage focused on those missing blockers only (what to prioritize/deprioritize next).
 - The subject matter depth is {depth}
 - Limit the number of prerequisites to {max_new_prereqs_cap}
 - When limiting, rank candidates by direct prerequisite strength and prioritize the most blocking/closest immediate prerequisites first.

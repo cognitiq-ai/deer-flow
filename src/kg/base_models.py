@@ -130,6 +130,8 @@ class ConceptNode(BaseModel):
             if value == "null":
                 return None
             return ConceptProfileOutput.model_validate_json(value)
+        if isinstance(value, dict):
+            return ConceptProfileOutput.model_validate(value)
         return value
 
     # The concept evaluation
@@ -144,6 +146,8 @@ class ConceptNode(BaseModel):
             if value == "null":
                 return None
             return ConceptProfileEvaluation.model_validate_json(value)
+        if isinstance(value, dict):
+            return ConceptProfileEvaluation.model_validate(value)
         return value
 
     def __hash__(self) -> int:

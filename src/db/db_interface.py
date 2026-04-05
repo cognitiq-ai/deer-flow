@@ -8,6 +8,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from psycopg.types.json import Jsonb
+
 from src.db.postgres_client import PostgresClient, PostgresConnectionError
 
 
@@ -68,7 +70,7 @@ class EducationalReportsRepository:
                         concept_id,
                         concept_name,
                         goal_id,
-                        content,
+                        Jsonb(content),
                         learning_objectives,
                         summary,
                         position_in_sequence,
@@ -234,7 +236,7 @@ class EducationalReportsRepository:
 
             if content is not None:
                 update_fields.append("content = %s")
-                params.append(content)
+                params.append(Jsonb(content))
 
             if learning_objectives is not None:
                 update_fields.append("learning_objectives = %s")

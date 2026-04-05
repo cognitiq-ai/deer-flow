@@ -52,12 +52,7 @@ def _derive_awg_node_budget(
     else:
         budget = 25
 
-    depth_factor = 1.0
-    if depth == "overview":
-        depth_factor = 1.2
-    elif depth == "rigorous":
-        depth_factor = 0.8
-    return max(10, int(round(budget * depth_factor)))
+    return budget
 
 
 async def session_orchestrator(

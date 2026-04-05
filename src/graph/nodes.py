@@ -16,6 +16,7 @@ from langgraph.types import Command, interrupt
 from src.agents import create_agent
 from src.config.agents import AGENT_LLM_MAP
 from src.config.configuration import Configuration
+from src.kg.utils import llm_with_retry
 from src.llms.llm import get_llm_by_type, get_llm_token_limit_by_type
 from src.prompts.planner_model import Plan
 from src.prompts.template import apply_prompt_template
@@ -124,25 +125,21 @@ def planner_node(
     if configurable.enable_deep_thinking:
         llm = get_llm_by_type("reasoning")
     elif AGENT_LLM_MAP["planner"] == "basic":
-        llm = get_llm_by_type("basic").with_structured_output(
-            Plan,
-            method="json_mode",
-        )
+        llm = get_llm_by_type("basic")
     else:
         llm = get_llm_by_type(AGENT_LLM_MAP["planner"])
+
+    llm = llm.with_structured_output(
+        Plan,
+        method="json_mode",
+    )
 
     # if the plan iterations is greater than the max plan iterations, return the reporter node
     if plan_iterations >= configurable.max_plan_iterations:
         return Command(goto="reporter")
 
-    full_response = ""
-    if AGENT_LLM_MAP["planner"] == "basic" and not configurable.enable_deep_thinking:
-        response = llm.invoke(messages)
-        full_response = response.model_dump_json(indent=4, exclude_none=True)
-    else:
-        response = llm.stream(messages)
-        for chunk in response:
-            full_response += chunk.content
+    response = llm.invoke(messages)
+    full_response = response.model_dump_json(indent=4, exclude_none=True)
     logger.debug(f"Current state messages: {state['messages']}")
     logger.info(f"Planner response: {full_response}")
 
@@ -355,11 +352,15 @@ def reporter_node(state: State, config: RunnableConfig):
     report_style = configurable.report_style
 
     if report_style == "educational":
-        structured_llm = llm.with_structured_output(EducationalReportOutput)
+        schema_class = EducationalReportOutput
     else:
-        structured_llm = llm.with_structured_output(ReportOutput)
+        schema_class = ReportOutput
 
-    response_content = structured_llm.invoke(invoke_messages)
+    response_content = llm_with_retry(
+        llm=llm,
+        schema_class=schema_class,
+        messages=invoke_messages,
+    )
 
     logger.info(f"reporter response: {response_content}")
 

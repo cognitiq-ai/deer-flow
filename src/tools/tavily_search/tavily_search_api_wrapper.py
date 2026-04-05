@@ -2,10 +2,9 @@
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: MIT
 
-import json
+import asyncio
 from typing import Dict, List, Optional
 
-import aiohttp
 import requests
 from langchain_tavily._utilities import TAVILY_API_URL
 from langchain_tavily.tavily_search import (
@@ -68,31 +67,20 @@ class EnhancedTavilySearchAPIWrapper(OriginalTavilySearchAPIWrapper):
         include_image_descriptions: Optional[bool] = False,
     ) -> Dict:
         """Get results from the Tavily Search API asynchronously."""
-
-        # Function to perform the API call
-        async def fetch() -> str:
-            params = {
-                "api_key": self.tavily_api_key.get_secret_value(),
-                "query": query,
-                "max_results": max_results,
-                "search_depth": search_depth,
-                "include_domains": include_domains,
-                "exclude_domains": exclude_domains,
-                "include_answer": include_answer,
-                "include_raw_content": include_raw_content,
-                "include_images": include_images,
-                "include_image_descriptions": include_image_descriptions,
-            }
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.post(f"{TAVILY_API_URL}/search", json=params) as res:
-                    if res.status == 200:
-                        data = await res.text()
-                        return data
-                    else:
-                        raise Exception(f"Error {res.status}: {res.reason}")
-
-        results_json_str = await fetch()
-        return json.loads(results_json_str)
+        # Delegate to the sync requests-based implementation so sync/async
+        # callers share the same HTTP + certificate behavior.
+        return await asyncio.to_thread(
+            self.raw_results,
+            query,
+            max_results,
+            search_depth,
+            include_domains,
+            exclude_domains,
+            include_answer,
+            include_raw_content,
+            include_images,
+            include_image_descriptions,
+        )
 
     def clean_results_with_images(
         self, raw_results: Dict[str, List[Dict]]
