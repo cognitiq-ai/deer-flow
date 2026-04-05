@@ -21,6 +21,7 @@ from src.kg.state import (
     InferRelationshipsState,
     InferRelationshipState,
 )
+from src.llms.llm import get_embedding_model
 from src.orchestrator.models import (
     LearnerPersonalizationRequest,
     SessionLog,
@@ -362,26 +363,114 @@ def awg_consolidator(
         {"duplicate_stub_names": duplicate_stub_names},
     )
 
-    # Step 4: Infer relationships between defined concept nodes
+    # Step 3: Build pre-commit dedup candidate pairs against PKG.
     session_log.log(
-        "INFO", "KG4: Step 3 - Inferring relationships between defined concepts"
+        "INFO", "KG4: Step 3 - Building pre-commit PKG dedup candidate pairs"
+    )
+    precommit_dedup_metrics = {
+        "exact_name_candidates": 0,
+        "vector_candidates": 0,
+        "vector_embeddings_generated": 0,
+        "vector_embedding_missing": 0,
+        "candidate_pairs_added": 0,
+        "duplicate_edges_inferred": 0,
+        "merged_into_pkg": 0,
+        "dedup_skipped_missing_node": 0,
+    }
+    pkg_candidate_nodes: dict[str, ConceptNode] = {}
+    pkg_candidate_pairs: list[tuple[ConceptNode, ConceptNode]] = []
+    pkg_pair_keys: set[tuple[str, str]] = set()
+
+    embedding_model = None
+    try:
+        embedding_model = get_embedding_model()
+    except Exception:
+        session_log.log(
+            "WARNING",
+            "KG4: Failed to load embedding model for pre-commit PKG dedup; exact-name lookup only",
+        )
+
+    for concept in defined_concepts:
+        if (
+            concept.exists_in_pkg
+            or concept.session_disposition == SessionDispositionState.PRUNED
+        ):
+            continue
+
+        concept_candidates: dict[str, ConceptNode] = {}
+        exact_matches = pkg_interface.find_nodes_by_exact_name(
+            concept.name,
+            limit=3,
+            node_type_filter=["concept"],
+        )
+        precommit_dedup_metrics["exact_name_candidates"] += len(exact_matches)
+        for candidate in exact_matches:
+            if candidate.id != concept.id:
+                concept_candidates[candidate.id] = candidate
+
+        definition_embedding = concept.definition_embedding
+        if not definition_embedding and embedding_model:
+            definition_text = concept.definition or concept.summary or concept.name
+            try:
+                definition_embedding = embedding_model.embed_query(definition_text)
+                concept.definition_embedding = definition_embedding
+                precommit_dedup_metrics["vector_embeddings_generated"] += 1
+            except Exception as e:
+                session_log.log(
+                    "WARNING",
+                    f"KG4: Failed to embed concept for PKG dedup: {e}",
+                    {"concept_id": concept.id, "concept_name": concept.name},
+                )
+
+        if definition_embedding:
+            vector_matches = pkg_interface.vector_search_definition_nodes(
+                definition_embedding,
+                limit=5,
+                similarity_threshold=0.75,
+                node_type_filter=["concept"],
+            )
+            precommit_dedup_metrics["vector_candidates"] += len(vector_matches)
+            for candidate in vector_matches:
+                if candidate.id != concept.id:
+                    concept_candidates[candidate.id] = candidate
+        else:
+            precommit_dedup_metrics["vector_embedding_missing"] += 1
+
+        for candidate in concept_candidates.values():
+            pair_key = (concept.id, candidate.id)
+            if pair_key in pkg_pair_keys:
+                continue
+            pkg_pair_keys.add(pair_key)
+            pkg_candidate_nodes[candidate.id] = candidate
+            pkg_candidate_pairs.append((concept, candidate))
+            precommit_dedup_metrics["candidate_pairs_added"] += 1
+
+    session_log.log(
+        "INFO",
+        "KG4: Pre-commit PKG dedup candidate building completed",
+        precommit_dedup_metrics,
     )
 
-    inter_concept_relationships = []
-    if len(defined_concepts) > 1:
-        # Create concept pairs for relationship inference
-        concept_pairs = []
-        for i, concept_a in enumerate(defined_concepts):
-            for j, concept_b in enumerate(defined_concepts):
-                # Avoid self-relationships
-                if i < j:
-                    concept_pairs.append((concept_a, concept_b))
+    # Step 4: Infer relationships between defined concepts and PKG candidate pairs
+    session_log.log("INFO", "KG4: Step 4 - Inferring relationships")
 
+    inter_concept_relationships = []
+    concept_pairs: list[tuple[ConceptNode, ConceptNode]] = []
+    for i, concept_a in enumerate(defined_concepts):
+        for j, concept_b in enumerate(defined_concepts):
+            if i < j:
+                concept_pairs.append((concept_a, concept_b))
+    concept_pairs.extend(pkg_candidate_pairs)
+
+    if concept_pairs:
         session_log.log(
             "INFO",
             f"KG4: Inferring relationships for {len(concept_pairs)} concept pairs",
+            {
+                "defined_defined_pairs": len(concept_pairs) - len(pkg_candidate_pairs),
+                "pkg_dedup_pairs": len(pkg_candidate_pairs),
+            },
         )
-
         initial_relationship_state = InferRelationshipsState(
             infer_relationships=[
                 InferRelationshipState(concept_a=concept_a, concept_b=concept_b)
@@ -389,19 +478,28 @@ def awg_consolidator(
             ],
             relationships=[],
         )
-
-        # Run relationship inference in parallel
         inter_concept_relationships_state = InferRelationshipsState(
             **infer_relationship_graph.invoke(initial_relationship_state)
         )
         inter_concept_relationships = inter_concept_relationships_state.relationships
 
-    # Add non-duplicate relationships to consolidated AWG
+    precommit_dedup_metrics["duplicate_edges_inferred"] = len(
+        [
+            rel
+            for rel in inter_concept_relationships
+            if rel.type == RelationshipType.IS_DUPLICATE_OF
+        ]
+    )
+
+    # Add non-duplicate relationships to consolidated AWG when both nodes are present.
+    awg_node_ids = set(consolidated_awg.nodes.keys())
     other_relationships = [
         rel
         for rel in inter_concept_relationships
         if rel.type
         not in (RelationshipType.IS_DUPLICATE_OF, RelationshipType.HAS_PREREQUISITE)
+        and rel.source_node_id in awg_node_ids
+        and rel.target_node_id in awg_node_ids
     ]
     for rel in other_relationships:
         consolidated_awg.merge_relationship(rel)
@@ -412,7 +510,7 @@ def awg_consolidator(
     )
 
     # Step 5: Handle duplicates and merge concepts
-    session_log.log("INFO", "KG4: Step 4 - Handling duplicates and merging concepts")
+    session_log.log("INFO", "KG4: Step 5 - Handling duplicates and merging concepts")
 
     duplicate_relationships = [
         rel
@@ -423,10 +521,31 @@ def awg_consolidator(
     for duplicate_rel in duplicate_relationships:
         try:
             # Get the concepts involved in the duplicate relationship
-            concept1, concept2 = (
-                consolidated_awg.get_node(node)
-                for node in [duplicate_rel.source_node_id, duplicate_rel.target_node_id]
-            )
+            concept1 = consolidated_awg.get_node(duplicate_rel.source_node_id)
+            if not concept1 and duplicate_rel.source_node_id in pkg_candidate_nodes:
+                consolidated_awg.merge_node(
+                    pkg_candidate_nodes[duplicate_rel.source_node_id]
+                )
+                concept1 = consolidated_awg.get_node(duplicate_rel.source_node_id)
+
+            concept2 = consolidated_awg.get_node(duplicate_rel.target_node_id)
+            if not concept2 and duplicate_rel.target_node_id in pkg_candidate_nodes:
+                consolidated_awg.merge_node(
+                    pkg_candidate_nodes[duplicate_rel.target_node_id]
+                )
+                concept2 = consolidated_awg.get_node(duplicate_rel.target_node_id)
+
+            if not concept1 or not concept2:
+                precommit_dedup_metrics["dedup_skipped_missing_node"] += 1
+                session_log.log(
+                    "WARNING",
+                    "KG4: Skipping duplicate merge due to missing concept node",
+                    {
+                        "source_node_id": duplicate_rel.source_node_id,
+                        "target_node_id": duplicate_rel.target_node_id,
+                    },
+                )
+                continue
 
             if concept1.exists_in_pkg != concept2.exists_in_pkg:
                 # One of the nodes in PKG - merge into one in PKG
@@ -448,6 +567,8 @@ def awg_consolidator(
 
             # Merge target into source
             merged_concept = consolidated_awg.merge_concepts(source.id, target.id)
+            if source.exists_in_pkg and not target.exists_in_pkg:
+                precommit_dedup_metrics["merged_into_pkg"] += 1
 
             session_log.log(
                 "INFO",
@@ -468,8 +589,14 @@ def awg_consolidator(
             session_log.log("ERROR", f"KG4: Error merging duplicate concepts: {e}")
             consolidation_status = "PARTIAL_WITH_ISSUES"
 
+    session_log.log(
+        "INFO",
+        "KG4: Pre-commit PKG dedup observability",
+        precommit_dedup_metrics,
+    )
+
     # Step 6: Prepare for PKG commit and handle cycles
-    session_log.log("INFO", "KG4: Step 5 - Preparing for PKG commit")
+    session_log.log("INFO", "KG4: Step 6 - Preparing for PKG commit")
 
     # Collect nodes and relationships to commit
     commit_nodes: set[ConceptNode] = set()

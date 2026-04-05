@@ -17,6 +17,11 @@ There are two persistence surfaces in the interactive runtime:
 
 - `src/orchestrator/kg.py::awg_consolidator` calls:
   - `pkg_interface.commit_changes(upsert_nodes, upsert_edges, delete_nodes)`
+- Before commit, consolidator now runs a pre-commit PKG dedup pass:
+  - exact-name candidate lookup
+  - definition-vector candidate lookup
+  - LLM duplicate adjudication via `infer_relationship_graph` (`IS_DUPLICATE_OF`)
+  - PKG-anchored concept merge before final upsert payload construction
 
 ### `commit_changes` behavior
 

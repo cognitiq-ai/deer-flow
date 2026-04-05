@@ -45,6 +45,7 @@ The runtime now includes stronger expansion controls:
 - Personalization emits `prereq_scope_advice` that is passed into prerequisite planning/discovery/coverage prompts to prioritize search while preserving canonical prerequisite coverage semantics.
 - Concept research now starts with eager related-concept inference and overlap-based duplicate short-circuit before full profile research.
 - KG4 consolidation includes focus->defined merge reconciliation to prevent stale seed/focus stubs from parallel snapshot resurrection.
+- KG4 now adds a pre-commit PKG dedup pass (exact-name + definition-vector candidate retrieval + LLM duplicate inference) to guard canonical PKG quality under parallel multi-session writes.
 
 ## Documentation Conventions
 

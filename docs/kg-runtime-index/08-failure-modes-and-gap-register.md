@@ -48,7 +48,7 @@ This module is the explicit intended-vs-current register. It is split into:
 ### Consolidation / dedup
 
 - `src/orchestrator/kg.py::awg_consolidator`
-  - Gap: stub dedup first-pass is exact name only; semantic alias handling relies on later inference.
+  - Gap: stub dedup first-pass is exact name only; pre-commit PKG semantic dedup now exists, but quality still depends on vector candidate recall and LLM inference precision.
 - `src/kg/agent_working_graph.py::resolve_cycles`
   - Gap: default independent cycle-breaking by relationship type may produce different outcomes than cumulative multi-type reasoning.
 

@@ -952,6 +952,85 @@ class PKGInterface:
             return_graph=True,
         )
 
+    def vector_search_definition_nodes(
+        self,
+        definition_embedding: List[float],
+        limit: int = 10,
+        similarity_threshold: float = 0.7,
+        node_type_filter: Optional[Union[str, List[str]]] = None,
+    ) -> List[ConceptNode]:
+        """Find concept nodes using definition embedding vector similarity."""
+        if node_type_filter is None:
+            node_type_filter = ["concept"]
+
+        return self._vector_search(
+            embedding=definition_embedding,
+            embedding_type="definition",
+            limit=limit,
+            similarity_threshold=similarity_threshold,
+            node_type_filter=node_type_filter,
+            return_graph=False,
+        )
+
+    def find_nodes_by_exact_name(
+        self,
+        name: str,
+        limit: int = 5,
+        node_type_filter: Optional[Union[str, List[str]]] = None,
+    ) -> List[ConceptNode]:
+        """Find concept nodes with exact normalized name match."""
+        if not isinstance(name, str) or not name.strip():
+            return []
+
+        normalized_name = " ".join(name.strip().lower().split())
+        if not normalized_name:
+            return []
+
+        normalized_node_types = None
+        if node_type_filter:
+            if isinstance(node_type_filter, str):
+                node_type_values = [node_type_filter]
+            else:
+                node_type_values = list(node_type_filter)
+
+            normalized_node_types = [
+                str(node_type).strip().lower()
+                for node_type in node_type_values
+                if isinstance(node_type, str) and str(node_type).strip()
+            ]
+
+            if not normalized_node_types:
+                normalized_node_types = None
+
+        query = """
+        MATCH (n:Concept)
+        WHERE toLower(trim(replace(n.name, '  ', ' '))) = $normalized_name
+        """
+        params: Dict[str, Any] = {"normalized_name": normalized_name, "limit": limit}
+
+        if normalized_node_types:
+            query += " AND toLower(n.node_type) IN $node_type_filters"
+            params["node_type_filters"] = normalized_node_types
+
+        query += """
+        RETURN n
+        ORDER BY n.updated_at DESC
+        LIMIT $limit
+        """
+
+        concepts: List[ConceptNode] = []
+        try:
+            with self.neo4j_client.driver.session() as session:
+                result = session.run(query, params)
+                for record in result:
+                    node = self._create_concept_node(record["n"])
+                    if node:
+                        concepts.append(node)
+        except Exception:
+            return []
+
+        return concepts
+
     def vector_search_name(
         self,
         name_embedding: List[float],

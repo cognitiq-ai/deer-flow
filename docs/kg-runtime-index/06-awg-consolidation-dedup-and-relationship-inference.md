@@ -1,8 +1,8 @@
 # AWG Consolidation, Dedup, Relationship Inference
 
-Last reviewed: 2026-03-30  
+Last reviewed: 2026-04-04  
 Runtime path: KG4  
-Primary files: `src/orchestrator/kg.py`, `src/kg/agent_working_graph.py`, `src/kg/builder.py`, `src/kg/relationships/nodes.py`
+Primary files: `src/orchestrator/kg.py`, `src/db/pkg_interface.py`, `src/kg/agent_working_graph.py`, `src/kg/builder.py`, `src/kg/relationships/nodes.py`
 
 ## What Happens Now
 
@@ -36,33 +36,44 @@ Primary files: `src/orchestrator/kg.py`, `src/kg/agent_working_graph.py`, `src/k
   - merges others via `merge_concepts(target, duplicate)`
 - This is exact-name dedup at session AWG level.
 
-### 3) Inter-concept relationship inference
+### 3) Pre-commit PKG dedup candidate build
 
-- Builds pairwise combinations of `defined_concepts`.
+- For each session-new defined concept (`exists_in_pkg=False`):
+  - exact-name PKG lookup (cheap candidate pass)
+  - definition-vector PKG lookup (top-k candidate pass)
+- Candidate pairs are accumulated as `(defined concept, PKG candidate)` for semantic adjudication.
+- Structured observability counters are emitted (candidate counts, embedding generation, skips).
+
+### 4) Inter-concept + PKG-candidate relationship inference
+
+- Builds pairwise combinations of:
+  - `defined_concepts` x `defined_concepts`
+  - `defined_concepts` x `PKG dedup candidates`
 - Runs `infer_relationship_graph.invoke(...)`.
 - Adds inferred relationships except:
   - `IS_DUPLICATE_OF`
   - `HAS_PREREQUISITE`
-  (these are treated separately)
+  (these are treated separately), and only when both endpoints exist in AWG.
 
-### 4) Duplicate concept merge by inferred duplicate edges
+### 5) Duplicate concept merge by inferred duplicate edges
 
 - For each `IS_DUPLICATE_OF` relation:
+  - hydrate PKG candidate node into AWG on-demand when needed for merge
   - choose merge target:
     - prefer node already in PKG (`exists_in_pkg`)
     - otherwise higher confidence node
   - merge via `merge_concepts(...)`
   - track dropped duplicate nodes
 
-Note: KG3 now performs eager duplicate/overlap merge per concept before profile synthesis. KG4 duplicate handling remains the cross-concept consolidation pass.
+Note: KG3 performs eager duplicate/overlap merge per concept before profile synthesis. KG4 now additionally runs a pre-commit PKG-facing dedup pass to catch duplicates introduced by concurrent multi-session writes.
 
-### 5) Commit candidate construction
+### 6) Commit candidate construction
 
 - Builds `commit_nodes` from post-consolidation defined concepts.
 - Builds `commit_relationships` from edges incident to defined concepts, excluding `HAS_PREREQUISITE` where source-side handling excludes unresolved stubs.
 - Builds `drop_nodes` from duplicate losers.
 
-### 6) Cycle pre-resolution
+### 7) Cycle pre-resolution
 
 - Calls `consolidated_awg.resolve_cycles()` before commit.
 - Removes lowest-confidence cycle-causing edges for cycle-prone types:
@@ -71,7 +82,7 @@ Note: KG3 now performs eager duplicate/overlap merge per concept before profile 
   - `IS_TYPE_OF`
 - Removed edges downgrade status to `PARTIAL_WITH_ISSUES`.
 
-### 7) Commit and post-commit reconciliation
+### 8) Commit and post-commit reconciliation
 
 - Calls `pkg_interface.commit_changes(commit_nodes, commit_relationships, drop_nodes)`.
 - Interprets commit result:
@@ -100,6 +111,7 @@ Note: KG3 now performs eager duplicate/overlap merge per concept before profile 
   - semantic dedup on `(source, target, type)` in `merge_relationship`
 - Concept dedup:
   - exact stub name dedup in consolidator step
+  - pre-commit PKG candidate retrieval (exact name + definition vector)
   - focus->defined reconciliation step to prevent stale snapshot resurrection
   - inferred duplicate merge using `IS_DUPLICATE_OF`
 - Post-merge cleanup:
@@ -108,8 +120,8 @@ Note: KG3 now performs eager duplicate/overlap merge per concept before profile 
 
 ## Intended vs Current Gap
 
-- Intended: robust semantic concept dedup.
-- Current: first-pass stub dedup is exact-name only; synonym/alias normalization is not directly applied in that phase.
+- Intended: robust semantic concept dedup including PKG consistency under concurrent sessions.
+- Current: first-pass stub dedup remains exact-name; PKG-facing semantic dedup is now added pre-commit via LLM relationship inference, but remains bounded by candidate retrieval quality and inference thresholds.
 
 - Intended: clear commit candidate semantics for prerequisite edges.
 - Current: consolidator intentionally excludes many `HAS_PREREQUISITE` edges from commit candidate collection when attached to unresolved stubs, which can delay graph maturation.
