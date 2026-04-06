@@ -4,8 +4,11 @@ This module implements the KG agent components as specified in Knowledge_Graph_A
 """
 
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional, Union
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from langgraph.types import Command
@@ -35,6 +38,61 @@ from src.orchestrator.models import (
 
 load_dotenv()
 bootstrap_graph_with_memory = build_bootstrap_graph_with_memory()
+
+
+def _project_root() -> Path:
+    """Resolve repository root from this module path."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _derive_session_id(session_input: KGSessionInput) -> str:
+    """Use provided session id when available, else generate one."""
+    personalization = session_input.personalization
+    existing_session_id: Optional[str] = None
+    if personalization and personalization.session:
+        raw_session_id = personalization.session.session_id
+        if raw_session_id:
+            trimmed = raw_session_id.strip()
+            if trimmed:
+                existing_session_id = trimmed
+
+    return existing_session_id or f"sess_{uuid4().hex}"
+
+
+def _persist_session_log_to_file(
+    session_log: SessionLog,
+    session_id: str,
+    thread_id: Optional[str],
+    overall_status: str,
+    output_dir: Optional[Path] = None,
+) -> Path:
+    """
+    Persist the full in-memory session log to a JSON file keyed by session id.
+    """
+    log_dir = output_dir or (_project_root() / "artifacts" / "session_logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{session_id}.json"
+
+    payload = {
+        "session_id": session_id,
+        "thread_id": thread_id,
+        "overall_status": overall_status,
+        "persisted_at": datetime.now().isoformat(),
+        "total_log_entries": len(session_log.logs),
+        "logs": session_log.logs,
+    }
+
+    with log_path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, default=_json_default_serializer)
+
+    return log_path
+
+
+def _json_default_serializer(value: Any) -> Any:
+    """Serialize non-JSON-native values used in session logs."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 def _derive_awg_node_budget(
@@ -77,6 +135,10 @@ async def session_orchestrator(
     else:
         session_log_global = session_logger
 
+    session_id = f"sess_{uuid4().hex}"
+    thread_id: Optional[str] = None
+    overall_session_status = "IN_PROGRESS"
+
     session_log_global.log(
         "INFO", "KG1: Starting Session Orchestrator", session_request_data
     )
@@ -96,6 +158,9 @@ async def session_orchestrator(
         goal_string = (session_input.goal_string or "").strip()
         thread_id = session_input.thread_id
         interrupt_feedback = session_input.interrupt_feedback
+        session_id = _derive_session_id(session_input)
+        if session_input.personalization and session_input.personalization.session:
+            session_input.personalization.session.session_id = session_id
         enable_deep_thinking = bool(session_input.enable_deep_thinking)
         config.enable_deep_thinking = enable_deep_thinking
         personalization_request_data = (
@@ -114,6 +179,7 @@ async def session_orchestrator(
                 {
                     "goal_string": goal_string,
                     "thread_id": thread_id,
+                    "session_id": session_id,
                     "interrupt_feedback": bool(interrupt_feedback),
                 }
             )
@@ -165,6 +231,7 @@ async def session_orchestrator(
 
         if bootstrap_interrupt:
             session_log_global.log("INFO", "Bootstrap interrupted for user feedback")
+            overall_session_status = "INTERRUPTED"
             return KGInterruptedResponse(
                 thread_id=thread_id,
                 interrupt=KGInterruptPayload(**bootstrap_interrupt),
@@ -172,6 +239,7 @@ async def session_orchestrator(
 
         if not bootstrap_final_state:
             session_log_global.log("ERROR", "Bootstrap produced no final state")
+            overall_session_status = "FAILURE_BOOTSTRAP_REQUIRED"
             return KGBootstrapFailureResponse(
                 thread_id=thread_id,
                 error="Bootstrap did not complete with a final state.",
@@ -180,6 +248,7 @@ async def session_orchestrator(
         bootstrap_contract_data = bootstrap_final_state.get("bootstrap_contract")
         if not bootstrap_contract_data:
             session_log_global.log("ERROR", "Bootstrap did not produce contract")
+            overall_session_status = "FAILURE_BOOTSTRAP_REQUIRED"
             return KGBootstrapFailureResponse(
                 thread_id=thread_id,
                 error="Bootstrap contract is required to proceed.",
@@ -209,6 +278,7 @@ async def session_orchestrator(
 
         if identified_goal is None:
             session_log_global.log("ERROR", "Failed to seed goal node from bootstrap")
+            overall_session_status = "FAILURE_BOOTSTRAP_REQUIRED"
             return KGBootstrapFailureResponse(
                 thread_id=thread_id,
                 error="Bootstrap seeding failed for goal node.",
@@ -247,8 +317,6 @@ async def session_orchestrator(
         )
 
         # Main Iterative Research Loop
-        overall_session_status = "IN_PROGRESS"
-
         while (
             decision_criteria == "CONTINUE_RESEARCH"
             and iteration_main_current < config.max_iteration_main
@@ -711,6 +779,9 @@ async def session_orchestrator(
                 overall_session_status = "PARTIAL_EDUCATIONAL_CONTENT_FAILURE"
 
         # Finalization
+        if overall_session_status == "IN_PROGRESS":
+            overall_session_status = "SUCCESS"
+
         session_summary = _generate_session_summary(
             session_log_global,
             {
@@ -726,6 +797,7 @@ async def session_orchestrator(
                     concept.name for concept in seed_focus_concepts
                 ],
                 "thread_id": thread_id,
+                "session_id": session_id,
             },
         )
 
@@ -742,6 +814,7 @@ async def session_orchestrator(
         return session_summary
 
     except Exception as e:
+        overall_session_status = "FAILURE_CRITICAL_ERROR"
         session_log_global.log(
             "ERROR", f"KG1: Critical error in session orchestrator: {e}"
         )
@@ -756,6 +829,24 @@ async def session_orchestrator(
             )
 
         return error_summary
+    finally:
+        try:
+            log_path = _persist_session_log_to_file(
+                session_log=session_log_global,
+                session_id=session_id,
+                thread_id=thread_id,
+                overall_status=overall_session_status,
+            )
+            session_log_global.log(
+                "INFO",
+                "KG1: Persisted session log to file",
+                {"session_id": session_id, "path": str(log_path)},
+            )
+        except Exception as persist_error:
+            print(
+                "[WARNING] Failed to persist session log "
+                f"for session_id={session_id}: {persist_error}"
+            )
 
 
 def session_orchestrator_celery_task(
