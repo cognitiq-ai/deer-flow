@@ -8,6 +8,26 @@ from typing import Any, Optional
 
 from langchain_core.runnables import RunnableConfig
 
+
+def derive_awg_node_budget(
+    default_budget: int, session_time_minutes: Optional[int], depth: str
+) -> int:
+    """Derive a time-aware AWG node budget with conservative defaults.
+
+    ``depth`` is reserved for future tuning; session length is the active signal today.
+    """
+    _ = depth
+    if session_time_minutes is None:
+        return default_budget
+    if session_time_minutes <= 30:
+        return 10
+    if session_time_minutes <= 60:
+        return 15
+    if session_time_minutes <= 120:
+        return 20
+    return 25
+
+
 from src.config.loader import get_int_env, get_str_env
 from src.config.report_style import ReportStyle
 from src.rag.retriever import Resource
@@ -76,7 +96,6 @@ class Configuration:
     bootstrap_dominant_confidence_threshold = (
         0.7  # Minimum confidence for dominant anchor
     )
-    bootstrap_max_initial_anchors = 3  # Max initial focus concepts for multi-anchor
 
     # Educational Content Generation
     enable_content = True  # Whether to generate content after KG

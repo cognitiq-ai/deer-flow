@@ -57,7 +57,8 @@ personalization request.
 - constrained_learning: strong constraints dominate execution.
 
 ### Anchor guidance
-- Return 3-5 concept anchors unless context is too sparse.
+- Return at least 1 and at most {max_concept_anchors} concept anchors unless context is too sparse to support multiple anchors.
+- Prefer fewer, higher-confidence anchors when the goal is narrow.
 - Confidence values must be between 0 and 1.
 - Keep ranks 1-based and ordered by confidence.
 - Provide a complete definition of each selected anchor concept. Do not truncate or ellipsize the definition.

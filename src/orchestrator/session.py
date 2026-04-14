@@ -6,6 +6,7 @@ This module implements the KG agent components as specified in Knowledge_Graph_A
 import asyncio
 import json
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4
@@ -14,9 +15,9 @@ from dotenv import load_dotenv
 from langgraph.types import Command
 
 from src.config import Configuration
+from src.config.configuration import derive_awg_node_budget
 from src.db.pkg_interface import PKGInterface
 from src.kg.base_models import ConceptNodeStatus, SessionDispositionState
-from src.kg.bootstrap.builder import build_bootstrap_graph_with_memory
 from src.kg.bootstrap.schemas import BootstrapContract
 from src.kg.bootstrap.state import BootstrapState
 from src.orchestrator.content import content_generator
@@ -37,7 +38,14 @@ from src.orchestrator.models import (
 )
 
 load_dotenv()
-bootstrap_graph_with_memory = build_bootstrap_graph_with_memory()
+
+
+@lru_cache(maxsize=1)
+def _bootstrap_graph_with_memory():
+    """Lazy graph build avoids import cycles (bootstrap <-> session)."""
+    from src.kg.bootstrap.builder import build_bootstrap_graph_with_memory
+
+    return build_bootstrap_graph_with_memory()
 
 
 def _project_root() -> Path:
@@ -93,24 +101,6 @@ def _json_default_serializer(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
-
-
-def _derive_awg_node_budget(
-    default_budget: int, session_time_minutes: Optional[int], depth: str
-) -> int:
-    """Derive a time-aware AWG node budget with conservative defaults."""
-    if session_time_minutes is None:
-        budget = default_budget
-    elif session_time_minutes <= 30:
-        budget = 10
-    elif session_time_minutes <= 60:
-        budget = 15
-    elif session_time_minutes <= 120:
-        budget = 20
-    else:
-        budget = 25
-
-    return budget
 
 
 async def session_orchestrator(
@@ -211,7 +201,7 @@ async def session_orchestrator(
         }
         bootstrap_final_state = None
         bootstrap_interrupt = None
-        for mode, chunk in bootstrap_graph_with_memory.stream(
+        for mode, chunk in _bootstrap_graph_with_memory().stream(
             bootstrap_input,
             config=bootstrap_config,
             stream_mode=["updates", "values"],
@@ -260,7 +250,7 @@ async def session_orchestrator(
             else BootstrapContract(**bootstrap_contract_data)
         )
         # Apply a time-aware AWG cap derived from learner constraints/preferences.
-        config.max_awg_nodes_total = _derive_awg_node_budget(
+        config.max_awg_nodes_total = derive_awg_node_budget(
             default_budget=config.max_awg_nodes_total,
             session_time_minutes=bootstrap_contract.personalization.constraints.session_time_minutes,
             depth=bootstrap_contract.personalization.preferences.depth,

@@ -7,7 +7,7 @@ from typing import List, Sequence, Tuple
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
-from src.config.configuration import Configuration
+from src.config.configuration import Configuration, derive_awg_node_budget
 from src.kg.bootstrap.prompts import (
     RELATED_FIELDS,
     bootstrap_extract_and_assess_instructions,
@@ -72,16 +72,11 @@ def _bootstrap_messages(
     state: BootstrapState,
     prompt: str,
     task_name: str,
-    primary_field: str = "N/A",
 ) -> List:
     """Build bootstrap system+human message pair with shared workflow context."""
     system_prompt = system_message_bootstrap.format(
         current_date=get_current_date(),
-        initial_user_goal=state.initial_user_message,
-        latest_user_message=(state.last_user_message or state.initial_user_message),
-        collected_yaml=to_yaml(state.collected),
         missing_fields_yaml=to_yaml(state.missing_fields),
-        primary_field=primary_field,
         task_name=task_name,
     )
     return [SystemMessage(content=system_prompt), HumanMessage(content=prompt)]
@@ -316,7 +311,6 @@ def bootstrap_ask(state: BootstrapState, config) -> dict:
                 state,
                 prompt,
                 task_name="clarification_question_planning",
-                primary_field=primary,
             ),
         )
         # Ensure related-fields budget stays bounded even if model over-produces.
@@ -513,12 +507,14 @@ def _fallback_canonical_goal(collected: BootstrapCollectedData) -> CanonicalGoal
 
 
 def _fallback_anchor_set(canonical_goal: CanonicalGoal) -> AnchorSet:
+    text = canonical_goal.normalized_goal_outcome.strip()
     return AnchorSet(
         concept_anchors=[
             AnchorCandidate(
-                name=canonical_goal.normalized_goal_outcome,
+                name=text,
                 rank=1,
                 confidence=0.6,
+                definition=text or "Fallback anchor derived from canonical goal.",
                 rationale="Fallback anchor derived from canonical goal.",
             )
         ]
@@ -590,11 +586,18 @@ def bootstrap_finalize_contract(state: BootstrapState, config) -> dict:
     assumption_notes = list(state.assumption_notes)
     personalization = _build_personalization_request(state, assumption_notes)
     collected_yaml = to_yaml(state.collected)
+    effective_awg_budget = derive_awg_node_budget(
+        default_budget=configurable.max_awg_nodes_total,
+        session_time_minutes=personalization.constraints.session_time_minutes,
+        depth=personalization.preferences.depth,
+    )
+    max_initial_anchors = max(1, effective_awg_budget - 2)
     synthesis_failed = False
     try:
         finalize_prompt = bootstrap_finalize_synthesis_instructions.format(
             collected_yaml=collected_yaml,
             personalization_yaml=to_yaml(personalization),
+            max_concept_anchors=max_initial_anchors,
         )
         synthesis = llm_with_retry(
             llm,
@@ -628,7 +631,7 @@ def bootstrap_finalize_contract(state: BootstrapState, config) -> dict:
         dominant_confidence_threshold=getattr(
             configurable, "bootstrap_dominant_confidence_threshold", 0.7
         ),
-        max_initial_anchors=getattr(configurable, "bootstrap_max_initial_anchors", 3),
+        max_initial_anchors=max_initial_anchors,
     )
     if not selected_initial_focus and anchors.concept_anchors:
         selected_initial_focus = [anchors.concept_anchors[0].name]

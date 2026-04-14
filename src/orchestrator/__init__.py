@@ -33,10 +33,6 @@ from .models import (
     LearnerPersonalizationRequest,
     SessionLog,
 )
-from .session import (
-    session_orchestrator,
-    session_orchestrator_celery_task,
-)
 
 __all__ = [
     # Core session orchestrator
@@ -58,3 +54,16 @@ __all__ = [
     # Content generation
     "content_generator",
 ]
+
+_SESSION_EXPORTS = frozenset(
+    {"session_orchestrator", "session_orchestrator_celery_task"}
+)
+
+
+def __getattr__(name: str):
+    """Lazy session imports avoid cycles with kg.bootstrap.schemas."""
+    if name in _SESSION_EXPORTS:
+        from . import session as _session
+
+        return getattr(_session, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
