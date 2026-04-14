@@ -17,7 +17,7 @@ This module is the explicit intended-vs-current register. It is split into:
 | 1 Bootstrap Q&A | bounded clarification with controlled exit | round-bounded extract/ask exists, now with stronger enforceable constraint elicitation; proceed gate can still loop indefinitely until user chooses proceed | `bootstrap_extract`, `bootstrap_ask`, `bootstrap_proceed_gate`, routing functions |
 | 2 Seed concepts | deterministic anchor -> seed concept realization | works; semantic dedup mostly deferred to later consolidation | `seed_awg_from_bootstrap` |
 | 3 Identify focus | next best current concepts globally | selection remains prerequisite-path-centric, now with structural path-strength filtering, parent-group all-or-none packing, and AWG budget stop | `criteria_check`, `find_prerequisites_path`, `prerequisite_path_strengths` |
-| 4 Initial profile research | robust profile with explicit confidence gates | profile loop exists with canonical quality/evidence/confidence gates; relevance/disposition enforcement is personalization-scoped | `initial_profile_research`, `propose_profile`, `evaluate_profile`, `profile_completed` |
+| 4 Initial profile research | robust but lean canonical profile for downstream reasoning | single-pass profile synthesis now exists; quality/confidence are emitted as compatibility metadata in the same call, while relevance/disposition enforcement remains personalization-scoped | `initial_profile_research`, `propose_profile`, `route_after_profile` |
 | 5 Personalization | strict learner constraints propagation | strong per-node personalization outputs exist (policy + `ConceptNode.session_disposition`); some preference fields are still advisory | personalization node chain in `personalization/nodes.py` |
 | 6 Prerequisite discovery | controlled expansion under personalization constraints | policy-aware filtering/limits implemented, now with post-merge novelty saturation to stop future local expansion | `propose_prerequisites`, `evaluate_prerequisites`, `action_prerequisites`, `merge_prerequisites` |
 | 7 AWG consolidation | semantic dedup + relationship quality control | exact-name stub dedup + inferred-duplicate merge + cycle pruning; alias handling is limited in first pass | `awg_consolidator`, `merge_concepts`, `resolve_cycles` |
@@ -46,8 +46,6 @@ Post-step finalization (after Step 9) is now documented explicitly in `10-post-e
 
 ### Inner-loop pipeline
 
-- `src/kg/profile/nodes.py::action_profile`
-  - Gap hotspot: URL flattening shape (`url_obj.url` into `ProfileResearchAction.urls`) can drift from expected schema shapes.
 - `src/kg/relationships/nodes.py::get_related_concepts`
   - Gap: broad exception fallback to empty related concepts can silently reduce relationship coverage.
 

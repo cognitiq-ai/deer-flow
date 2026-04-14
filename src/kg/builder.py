@@ -1,5 +1,3 @@
-from typing import List
-
 from langgraph.graph import END, START, StateGraph
 
 from src.kg.personalization.nodes import (
@@ -21,11 +19,9 @@ from src.kg.prerequisites.nodes import (
     propose_prerequisites,
 )
 from src.kg.profile.nodes import (
-    action_profile,
-    evaluate_profile,
     initial_profile_research,
-    profile_completed,
     propose_profile,
+    route_after_profile,
 )
 from src.kg.relationships.nodes import (
     get_related_concepts,
@@ -61,8 +57,6 @@ def create_concept_research_graph():
     builder.add_node("content_extractor", content_extractor)
     builder.add_node("collect_research", collect_research)
     builder.add_node("propose_profile", propose_profile)
-    builder.add_node("evaluate_profile", evaluate_profile)
-    builder.add_node("action_profile", action_profile)
     builder.add_node("get_related_concepts", get_related_concepts)
     builder.add_node("infer_relationship", infer_relationship)
     builder.add_node("merge_related_concepts", merge_related_concepts)
@@ -87,20 +81,10 @@ def create_concept_research_graph():
         route_after_research,
         ["propose_profile", "propose_prerequisites"],
     )
-    builder.add_edge("propose_profile", "evaluate_profile")
     builder.add_conditional_edges(
-        "evaluate_profile",
-        profile_completed,
-        [
-            "action_profile",
-            "personalization_preprocess",
-            "initial_prerequisite_research",
-        ],
-    )
-    builder.add_conditional_edges(
-        "action_profile",
-        route_after_action,
-        ["web_search", "content_extractor", "collect_research"],
+        "propose_profile",
+        route_after_profile,
+        ["personalization_preprocess", "initial_prerequisite_research"],
     )
     builder.add_conditional_edges(
         "get_related_concepts",

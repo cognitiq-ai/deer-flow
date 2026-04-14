@@ -99,11 +99,10 @@ Execution strategy:
      - narrative anchor (position in progression, bridge from previous concept, setup for next)
      - terminology continuity contract (canonical concept names)
    - evidence dossier (key claims from concept profile, relationship rationale, and known knowledge gaps)
-   - mastery + load planning contract from existing concept profile:
-     - outcomes (with bloom and success criteria)
-     - misconceptions (with correction hints)
-     - exemplars (worked example/counterexample)
-     - cognitive-load estimates (difficulty + effort minutes)
+  - lean profile guidance from existing concept profile:
+    - canonical summary/scope
+    - exemplars (worked example/counterexample) when available
+    - notes + evaluation uncertainty/confidence
    - personalization directives (`mode`, delivery, assessment, prereq policy)
 2. **Generate report** (`_generate_content`)
    - build deer-flow graph (`build_graph_with_memory`)
@@ -131,7 +130,7 @@ Educational reports are now expected to include:
 - `further_reading`
 - `summary`
 
-Mastery/load artifacts are **input-authoritative** from the concept profile (not re-generated as a separate output block).
+Lean profile guidance is **input-authoritative** for concept boundaries, example anchors, and uncertainty notes (not re-generated as a separate output block).
 
 ### Step 6: Aggregate Results and Final Status Folding
 

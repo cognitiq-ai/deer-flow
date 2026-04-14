@@ -88,8 +88,7 @@ Use this as the first stop when you have a specific runtime question.
 
 - `src/kg/profile/nodes.py::initial_profile_research`
 - `src/kg/profile/nodes.py::propose_profile`
-- `src/kg/profile/nodes.py::evaluate_profile`
-- `src/kg/profile/nodes.py::profile_completed`
+- `src/kg/profile/nodes.py::route_after_profile`
 - `src/kg/research/nodes.py` (search/extract routing and execution)
 - `src/kg/research/nodes.py::route_after_research` (uses `state.research_mode`; mode is stamped at phase entry nodes)
 
@@ -126,7 +125,7 @@ Use this as the first stop when you have a specific runtime question.
 - `src/kg/builder.py::create_concept_research_graph` (`START -> get_related_concepts`, early merge routing)
 - `src/kg/relationships/nodes.py::route_after_eager_related`
 - `src/kg/relationships/nodes.py::merge_related_concepts` (PKG-preferred anchor, overlap threshold, profile hydration)
-- `src/kg/profile/nodes.py::profile_completed` (no late relationship stage)
+- `src/kg/profile/nodes.py::route_after_profile` (profile now routes directly to personalization/prerequisites)
 
 ### "Where is AWG merge and dedup done?"
 
@@ -179,7 +178,7 @@ Use this as the first stop when you have a specific runtime question.
 
 ### "Where is continuity/terminology/evidence/mastery-load context injected?"
 
-- `src/orchestrator/content.py::_build_context` (prerequisite recap contract, narrative anchor, terminology contract, mastery/load planning contract)
+- `src/orchestrator/content.py::_build_context` (prerequisite recap contract, narrative anchor, terminology contract, lean profile guidance)
 - `src/orchestrator/content.py::_build_key_claims_dossier` (key claims from KG/profile/research artifacts)
 - `src/prompts/reporter.md` (educational style rules for objective alignment, continuity contract, and uncertainty notes)
 

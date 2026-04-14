@@ -52,7 +52,7 @@ The runtime now includes stronger expansion controls:
   - objective alignment map in output,
   - continuity contracts (prerequisite recap + narrative anchor + terminology consistency),
   - evidence dossier grounding + `uncertainty_notes`,
-  - profile-driven mastery/load planning inputs,
+  - lean profile-guidance inputs (scope, examples, uncertainty),
   - prerequisite assumptions communicated via input context and objective alignment dependencies.
 
 ## Documentation Conventions

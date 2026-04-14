@@ -33,10 +33,10 @@ Graph definition lives in `src/kg/builder.py::create_concept_research_graph`.
 5. `route_after_action` -> `web_search` and/or `content_extractor` fanout (or direct `collect_research`)
 6. `collect_research`
 7. `route_after_research` -> `propose_profile`
-8. `evaluate_profile`
-9. `profile_completed`:
-   - incomplete -> `action_profile` -> back to research fanout
-   - complete -> direct to personalization/prerequisite phase (no late relationship pass)
+8. `propose_profile` performs a single-pass synthesis of:
+   - lean canonical profile (`conceptualization`, optional `exemplars`, `notes`)
+   - compact compatibility evaluation (`knowledge_gap`, `confidence_score`, plus rubric fields)
+9. direct to personalization/prerequisite phase (no profile evaluation/action loop)
 
 ### Phase C: Personalization branch
 
@@ -86,8 +86,7 @@ Graph definition lives in `src/kg/builder.py::create_concept_research_graph`.
   - `research/nodes.py::content_extractor`
 - Profile synthesis and evaluation:
   - `profile/nodes.py::propose_profile`
-  - `profile/nodes.py::evaluate_profile`
-  - `profile/nodes.py::profile_completed`
+  - `profile/nodes.py::route_after_profile`
 
 ### Step 6: Personalization overlays
 
@@ -153,7 +152,7 @@ On exception, returns `{}`.
 - Current: inner-loop output is in-memory payload for session consolidation; no direct per-step persistence except later KG4 commit.
 
 - Intended: consistent shape handling for action plans.
-- Current: in `profile/nodes.py::action_profile`, URL flattening uses `all_urls.append(url_obj.url)` then passes `urls=all_urls` into `ProfileResearchAction`; this is a shape hotspot and can drift from expected typed URL objects.
+- Current: profile research no longer performs iterative action/evaluation passes; the remaining action-plan shape hotspot is in prerequisite discovery.
 
 - Intended: early duplicate detection to avoid redundant profile work.
 - Current: eager relationship inference uses lightweight concept context and can short-circuit profile generation; sparse/failed related-concept retrieval still falls back to normal profile path.

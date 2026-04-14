@@ -176,7 +176,7 @@ def _build_context(
             "current concept = the concept to teach now; "
             "upcoming concepts = likely next ideas to prepare for; "
             "evidence dossier = key claims and uncertainty constraints; "
-            "mastery/load profile = outcomes, misconceptions, exemplars, and pacing guidance."
+            "profile guidance = canonical scope, example anchors, and known uncertainty."
         )
     )
     context_parts.append(
@@ -402,64 +402,43 @@ def _build_context(
         ),
     )
 
-    # 7. Mastery + cognitive-load planning contract from existing profile.
-    context_parts.append("\n## MASTERY AND LOAD PLANNING")
+    # 7. Lean profile guidance from the expansion-time concept profile.
+    context_parts.append("\n## PROFILE GUIDANCE")
     profile = getattr(concept_node, "profile", None)
     if profile:
-        outcomes = getattr(profile, "outcomes", []) or []
-        misconceptions = getattr(profile, "misconceptions", []) or []
+        conceptualization = getattr(profile, "conceptualization", None)
         exemplars = getattr(profile, "exemplars", None)
-        cognitive_load = getattr(profile, "cognitive_load", None)
+        evaluation = getattr(concept_node, "evaluation", None)
 
         _append_yaml_payload(
             context_parts,
-            "MASTERY/LOAD PROFILE PAYLOAD",
+            "PROFILE GUIDANCE PAYLOAD",
             {
-                "outcomes": [
-                    {
-                        "statement": outcome.statement,
-                        "bloom_level": outcome.bloom_level,
-                        "success_criteria": outcome.success_criteria,
-                    }
-                    for outcome in outcomes
-                ],
-                "misconceptions": [
-                    {
-                        "statement": item.statement,
-                        "correction_hint": item.correction_hint,
-                    }
-                    for item in misconceptions
-                ],
+                "summary": getattr(conceptualization, "summary", None),
+                "scope": getattr(conceptualization, "scope", None),
                 "exemplars": {
                     "worked_example": getattr(exemplars, "worked_example", None),
                     "counterexample": getattr(exemplars, "counterexample", None),
                 }
                 if exemplars
                 else None,
-                "cognitive_load": {
-                    "difficulty_estimate": getattr(
-                        cognitive_load, "difficulty_estimate", None
-                    ),
-                    "effort_estimate_minutes": getattr(
-                        cognitive_load, "effort_estimate_minutes", None
-                    ),
-                }
-                if cognitive_load
-                else None,
+                "notes": getattr(profile, "notes", None),
+                "confidence_score": getattr(evaluation, "confidence_score", None),
+                "knowledge_gap": getattr(evaluation, "knowledge_gap", None),
             },
             intro=(
-                "This profile captures how deeply to teach, what misconceptions to anticipate, and how much effort to "
-                "demand. Treat it as authoritative so objectives, examples, and pacing remain instructionally coherent."
+                "This lean profile captures the canonical definition boundary, useful example anchors, and known "
+                "uncertainty. Treat it as authoritative for concept scope and stay transparent where evidence is thin."
             ),
         )
 
-        if not outcomes:
+        if not conceptualization:
             context_parts.append(
-                "No explicit mastery outcomes found in profile; infer conservatively from concept definition and evidence dossier."
+                "No structured conceptualization found in profile; infer conservatively from the evidence dossier and KG structure."
             )
     else:
         context_parts.append(
-            "No concept profile is available; apply standard progressive pacing and explicitly surface uncertainty where depth/difficulty may be under-specified."
+            "No concept profile is available; apply standard progressive pacing and explicitly surface uncertainty where concept boundaries may be under-specified."
         )
 
     # 8. Educational Instructions
@@ -476,7 +455,7 @@ def _build_context(
         "For each objective_alignment_map item, prerequisite_dependencies must list already-covered prerequisite concept names.",
         "Ground explanations and examples in evidence dossier key claims.",
         "Include uncertainty_notes for low-confidence, conflicting, or missing evidence.",
-        "Treat profile mastery/load constraints as authoritative; do not invent conflicting plans.",
+        "Treat the profile's concept boundaries, examples, and uncertainty notes as authoritative; do not invent conflicting plans.",
     ]
     if is_goal_finale:
         requirements[0] = (

@@ -60,30 +60,29 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    startCR["START"] --> initialProfile["initial_profile_research"]
+    startCR["START"] --> relatedNode["get_related_concepts"]
+    relatedNode --> routeRelated{"route_after_related"}
+    routeRelated --> inferRel["infer_relationship"]
+    routeRelated --> mergeRelated["merge_related_concepts"]
+    inferRel --> mergeRelated
+
+    mergeRelated --> eagerRoute{"route_after_eager_related"}
+    eagerRoute -->|duplicate + no request| initPrereq["initial_prerequisite_research"]
+    eagerRoute -->|duplicate + request| pPre["personalization_preprocess"]
+    eagerRoute -->|no duplicate| initialProfile["initial_profile_research"]
+
     initialProfile --> routeAction1{"route_after_action"}
     routeAction1 --> webSearch1["web_search"]
     routeAction1 --> contentExtract1["content_extractor"]
     routeAction1 --> collect1["collect_research"]
     webSearch1 --> collect1
     contentExtract1 --> collect1
-
     collect1 --> routeResearch1{"route_after_research"}
     routeResearch1 --> proposeProfile["propose_profile"]
-    proposeProfile --> evalProfile["evaluate_profile"]
-    evalProfile --> profileDone{"profile_completed"}
-    profileDone -->|incomplete| actionProfile["action_profile"]
-    actionProfile --> routeAction1
-    profileDone -->|complete| relatedNode["get_related_concepts"]
+    proposeProfile --> routeProfile{"route_after_profile"}
+    routeProfile -->|no request| initPrereq
+    routeProfile -->|has request| pPre
 
-    relatedNode --> routeRelated{"route_after_related"}
-    routeRelated --> inferRel["infer_relationship"]
-    routeRelated --> mergeRelated["merge_related_concepts"]
-    inferRel --> mergeRelated
-
-    mergeRelated --> personalizationRouter{"route_after_personalization_router"}
-    personalizationRouter -->|no request| initPrereq["initial_prerequisite_research"]
-    personalizationRouter -->|has request| pPre["personalization_preprocess"]
     pPre --> pFit["personalization_fit"]
     pFit --> pMode["personalization_mode"]
     pMode --> pDelivery["personalization_delivery"]

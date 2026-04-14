@@ -1,5 +1,3 @@
-from typing import List
-
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import RunnableConfig
 
@@ -11,24 +9,47 @@ from src.kg.message_store import (
     prepare_llm_messages,
 )
 from src.kg.profile.prompts import (
-    concept_profile_action_instructions,
-    concept_profile_evaluation_instructions,
-    concept_profile_output_instructions,
+    concept_profile_synthesis_instructions,
     initial_research_plan_instructions,
 )
 from src.kg.profile.schemas import (
     ConceptProfileEvaluation,
     ConceptProfileOutput,
-    ProfileActionPlan,
+    ConceptProfileSynthesis,
     ProfileResearchAction,
-    ResearchUrl,
 )
 from src.kg.state import ConceptProfile, ConceptResearchState, ResearchActionState
 from src.kg.utils import format_message, llm_with_retry, to_yaml
 from src.llms.llm import get_llm_by_type
 
 
-# Node implementations
+def _fallback_profile_state(reason: str) -> ConceptProfile:
+    return ConceptProfile(
+        concept=ConceptProfileOutput(
+            conceptualization=None,
+            exemplars=None,
+            notes=reason,
+        ),
+        evaluation=ConceptProfileEvaluation(
+            unitness_eval={
+                "unitness": "pass",
+                "rationale": "Fallback evaluation due to profile synthesis failure.",
+                "confidence": 0.0,
+            },
+            quality_score={
+                "score": 0.0,
+                "rationale": "No reliable profile synthesis was produced.",
+            },
+            evidence_score={
+                "score": 0.0,
+                "rationale": "No reliable evidence synthesis was produced.",
+            },
+            knowledge_gap=reason,
+            confidence_score=0.0,
+        ),
+    )
+
+
 def initial_profile_research(
     state: ConceptResearchState, config: RunnableConfig
 ) -> dict:
@@ -91,25 +112,16 @@ def initial_profile_research(
 
 def propose_profile(state: ConceptResearchState, config: RunnableConfig) -> dict:
     """
-    LangGraph node that proposes a concept profile.
+    LangGraph node that synthesizes a lean concept profile in a single LLM call.
     """
-    # Get the config
     configurable = Configuration.from_runnable_config(config)
-    # Increment the iteration number
     current_iteration = state.iteration_number + 1
-    # Initialize LLM
     llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
     llm = get_llm_by_type(llm_type)
-    knowledge_gap = (
-        state.profile.evaluation.knowledge_gap
-        if getattr(state.profile, "evaluation", None)
-        else "Not yet identified"
-    )
-    formatted_gen = concept_profile_output_instructions.format(
+
+    formatted_gen = concept_profile_synthesis_instructions.format(
         research_concept=state.concept.with_goal(state.goal_context),
-        knowledge_gap=knowledge_gap,
     )
-    # Curate the minimal context for this call:
     curated_context = curate_messages(
         MessageStore.ensure(state.messages),
         [
@@ -121,9 +133,8 @@ def propose_profile(state: ConceptResearchState, config: RunnableConfig) -> dict
         curated_context, [HumanMessage(content=formatted_gen)]
     )
     try:
-        profile = llm_with_retry(llm, ConceptProfileOutput, llm_messages)
-        output_str = to_yaml(profile)
-        # Only return incremental messages
+        synthesis = llm_with_retry(llm, ConceptProfileSynthesis, llm_messages)
+        output_str = to_yaml(synthesis.concept)
         messages = make_message_entry(
             "propose_profile",
             "profile_generation",
@@ -135,156 +146,27 @@ def propose_profile(state: ConceptResearchState, config: RunnableConfig) -> dict
         return {
             "messages": messages,
             "iteration_number": current_iteration,
-            "profile": ConceptProfile(concept=profile),
+            "profile": ConceptProfile(
+                concept=synthesis.concept, evaluation=synthesis.evaluation
+            ),
         }
     except Exception as e:
+        fallback_profile = _fallback_profile_state(f"Profile synthesis failed: {e}")
         return {
             "messages": make_message_entry(
                 "propose_profile",
                 "profile_generation_error",
                 [AIMessage(content=f"Error: {e}")],
             ),
+            "iteration_number": current_iteration,
+            "profile": fallback_profile,
         }
 
 
-def evaluate_profile(state: ConceptResearchState, config: RunnableConfig) -> dict:
+def route_after_profile(state: ConceptResearchState, config: RunnableConfig) -> str:
     """
-    LangGraph node that evaluates a concept profile.
+    Route immediately after single-pass profile synthesis.
     """
-    # Get the config
-    configurable = Configuration.from_runnable_config(config)
-
-    # Initialize LLM
-    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
-    llm = get_llm_by_type(llm_type)
-    formatted_eval = concept_profile_evaluation_instructions.format(
-        research_concept=state.concept.with_goal(state.goal_context),
-        goal_context=state.goal_context,
-        intent_coverage_map_yaml=to_yaml(state.intent_coverage_map),
-    )
-    # Curate the minimal context for this call:
-    curated_context = curate_messages(
-        MessageStore.ensure(state.messages),
-        [
-            ("propose_profile", "profile_generation"),
-        ],
-    )
-    # Build the message queue for the LLM
-    llm_messages = prepare_llm_messages(
-        curated_context, [HumanMessage(content=formatted_eval)]
-    )
-    try:
-        concept = state.profile.concept
-        evaluation = llm_with_retry(llm, ConceptProfileEvaluation, llm_messages)
-        output_str = to_yaml(evaluation)
-        # Only return incremental messages
-        messages = make_message_entry(
-            "evaluate_profile",
-            "profile_evaluation",
-            [
-                HumanMessage(content=formatted_eval),
-                AIMessage(content=format_message("profile_evaluation", output_str)),
-            ],
-        )
-        return {
-            "messages": messages,
-            "profile": ConceptProfile(concept=concept, evaluation=evaluation),
-        }
-    except Exception as e:
-        return {
-            "messages": make_message_entry(
-                "evaluate_profile",
-                "profile_evaluation_error",
-                [AIMessage(content=f"Error: {e}")],
-            ),
-        }
-
-
-def profile_completed(state: ConceptResearchState, config: RunnableConfig) -> str:
-    """
-    LangGraph condition function that checks if concept profile research is complete.
-    """
-    configurable = Configuration.from_runnable_config(config)
-    depth_exceeded = state.iteration_number >= configurable.max_iteration_main
-    score = getattr(getattr(state.profile, "evaluation", None), "confidence_score", 0.0)
-    is_complete = score >= configurable.reflection_confidence
-    if depth_exceeded or is_complete:
-        if getattr(state, "personalization_request", None) is None:
-            return "initial_prerequisite_research"
-        return "personalization_preprocess"
-
-    return "action_profile"
-
-
-def action_profile(state: ConceptResearchState, config: RunnableConfig) -> dict:
-    """
-    LangGraph node that actions a concept profile.
-    """
-    # Get the config
-    configurable = Configuration.from_runnable_config(config)
-
-    # Initialize LLM
-    llm_type = "reasoning" if configurable.enable_deep_thinking else "basic"
-    llm = get_llm_by_type(llm_type)
-    formatted_action = concept_profile_action_instructions.format(
-        research_concept=state.concept.with_goal(state.goal_context),
-        n_queries=configurable.max_search_queries,
-        n_urls=configurable.max_extract_urls,
-    )
-    # Curate the minimal context for this call:
-    curated_context = curate_messages(
-        MessageStore.ensure(state.messages),
-        [
-            ("propose_profile", "profile_generation"),
-            ("evaluate_profile", "profile_evaluation"),
-        ],
-    )
-    # Build the message queue for the LLM
-    llm_messages = prepare_llm_messages(
-        curated_context, [HumanMessage(content=formatted_action)]
-    )
-    try:
-        action = llm_with_retry(llm, ProfileActionPlan, llm_messages)
-        # Only return incremental messages
-        messages = make_message_entry(
-            "action_profile",
-            "profile_action_research",
-            [
-                HumanMessage(content=formatted_action),
-                AIMessage(
-                    content=format_message(
-                        "profile_action_research", action.knowledge_summary
-                    )
-                ),
-            ],
-        )
-
-        # Flatten the list of ProfileResearchAction items into a single action
-        # so that ConceptResearchState.action_plan is always a single object.
-        all_queries = []
-        all_urls: List[ResearchUrl] = []
-        for query in action.action_plan.queries:
-            all_queries.append(query)
-        for url_obj in action.action_plan.urls:
-            all_urls.append(url_obj.url)
-
-        action_plans = ResearchActionState(
-            node_key=("action_profile", "profile_action_research"),
-            action=ProfileResearchAction(
-                queries=all_queries,
-                urls=all_urls,
-            ),
-        )
-
-        return {
-            "messages": messages,
-            "action_plans": [action_plans],
-        }
-    except Exception as e:
-        return {
-            "messages": make_message_entry(
-                "action_profile",
-                "profile_action_research_error",
-                [AIMessage(content=f"Error: {e}")],
-            ),
-        }
+    if getattr(state, "personalization_request", None) is None:
+        return "initial_prerequisite_research"
+    return "personalization_preprocess"

@@ -1,6 +1,5 @@
 # pylint: disable=line-too-long
 
-from enum import Enum
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -9,17 +8,6 @@ from src.kg.research.schemas import EvidenceAtom, ResearchUrl, SearchQuery
 
 
 # Concept profile research schemas
-class BloomLevel(Enum):
-    """Classification as per Bloom's Taxonomy"""
-
-    REMEMBER = "remember"
-    UNDERSTAND = "understand"
-    APPLY = "apply"
-    ANALYZE = "analyze"
-    EVALUATE = "evaluate"
-    CREATE = "create"
-
-
 class Conceptualization(BaseModel):
     """Schema for defining a concept and its scope"""
 
@@ -36,49 +24,6 @@ class Conceptualization(BaseModel):
     sources: List[EvidenceAtom] = Field(
         min_length=1,
         description="Collection of supporting evidence claims and their sources.",
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Confidence score (0-1) of the completeness of research, accuracy, evidence support, etc.",
-    )
-
-
-class LearningOutcome(BaseModel):
-    """Single learning outcome with Bloom level and success criteria."""
-
-    statement: str = Field(
-        description="Observable outcome statement inferred directly or indirectly from the research."
-    )
-    bloom_level: str = Field(
-        description="Inferred Bloom taxonomy level (e.g., remember, apply)."
-    )
-    success_criteria: str = Field(
-        description="Criteria to judge mastery for this outcome."
-    )
-    sources: List[EvidenceAtom] = Field(
-        min_length=1,
-        description="Collection of supporting evidence claims and their sources.",
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Confidence score (0-1) of the completeness of research, accuracy, evidence support, etc.",
-    )
-
-
-class Misconception(BaseModel):
-    """Common misconception and a correction hint."""
-
-    statement: str = Field(
-        description="Common misconception about the research concept."
-    )
-    correction_hint: str = Field(
-        description="Concise hint to correct the misconception."
-    )
-    sources: List[str] = Field(
-        min_length=1,
-        description="Source URLs for research citations.",
     )
     confidence: float = Field(
         ge=0.0,
@@ -105,51 +50,19 @@ class Exemplars(BaseModel):
     )
 
 
-class EstimatedCognitiveLoad(BaseModel):
-    """Estimated cognitive load including the difficulty and effort required for learning the concept"""
-
-    difficulty_estimate: Literal["novice", "intermediate", "advanced"] = Field(
-        description="Estimated difficulty level of the research concept."
-    )
-    effort_estimate_minutes: int = Field(
-        description="Estimated time-on-task (in minutes) to learn the research concept at baseline depth (assuming mastery of any prerequisites)."
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Confidence score (0-1) of the completeness of research, accuracy, evidence support, etc.",
-    )
-
-
 class ConceptProfileOutput(BaseModel):
-    """Schema for concept profile output."""
+    """Lean canonical concept profile used during KG expansion."""
 
     conceptualization: Optional[Conceptualization] = Field(
         default=None,
         description="Definition and scope of the research concept including its inclusions, exclusions, and near-miss boundaries.",
     )
-    outcomes: List[LearningOutcome] = Field(
-        default_factory=list,
-        min_length=0,
-        max_length=5,
-        description="List of (upto 5) observable, assessable behaviors with mastery level and success criteria inferred directly or indirectly.",
-    )
-    misconceptions: List[Misconception] = Field(
-        default_factory=list,
-        min_length=0,
-        max_length=3,
-        description="List of common misconceptions about the research concept.",
-    )
     exemplars: Optional[Exemplars] = Field(
         default=None,
         description="Minimal exemplars (worked example and counterexample) of the research concept.",
     )
-    cognitive_load: Optional[EstimatedCognitiveLoad] = Field(
-        default=None,
-        description="Estimated cognitive load including the difficulty and effort required for learning the research concept.",
-    )
     notes: str = Field(
-        description="Short note on overall profile coverage and rationale for low-confidence or estimated fields."
+        description="Short uncertainty and coverage note describing what is still missing or weak in the current concept profile."
     )
 
 
@@ -213,6 +126,17 @@ class ConceptProfileEvaluation(BaseModel):
     )
 
 
+class ConceptProfileSynthesis(BaseModel):
+    """Single-pass concept profile synthesis output."""
+
+    concept: ConceptProfileOutput = Field(
+        description="Lean canonical concept profile for the concept."
+    )
+    evaluation: ConceptProfileEvaluation = Field(
+        description="Compact compatibility evaluation emitted in the same synthesis call."
+    )
+
+
 class ProfileResearchAction(BaseModel):
     """Action for concept profile research."""
 
@@ -222,15 +146,4 @@ class ProfileResearchAction(BaseModel):
     urls: List[ResearchUrl] = Field(
         default_factory=list,
         description="URLs to extract content for concept profile research.",
-    )
-
-
-class ProfileActionPlan(BaseModel):
-    """Next actions to address failing criteria in evaluation."""
-
-    knowledge_summary: str = Field(
-        description="Summary of knowledge about the concept profile based on the cumulative research."
-    )
-    action_plan: ProfileResearchAction = Field(
-        description="Actionable goals to address the identified knowledge gaps in the research for concept profile.",
     )
