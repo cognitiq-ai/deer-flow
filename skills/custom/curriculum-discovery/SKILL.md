@@ -52,7 +52,7 @@ If any of these are missing or ambiguous enough to block correct planning, ask f
 
 ## Core Responsibility
 
-Own only the semantic planning work that cannot be deferred:
+Own only the semantic curriculum-planning work:
 
 - ground the target outcome in the real domain
 - preserve the planning contract unless deviations are explicitly declared
@@ -65,74 +65,13 @@ Own only the semantic planning work that cannot be deferred:
 
 ## Workflow
 
-### Phase 1: Frame The Problem
+Follow these files as the authoritative contracts:
 
-Restate the planning brief in operational terms:
-
-- what capability the learner must demonstrate
-- what the learner likely already knows
-- what must be covered
-- what must be excluded
-- what evidence counts as success
-- which constraints are hard requirements rather than preferences
-
-### Phase 2: Ground The Target Outcome
-
-Use research to determine what the target capability really requires in the domain.
-
-- identify the minimal set of enabling ideas or sub-capabilities
-- prefer authoritative and current sources
-- note conflicts or disagreements explicitly
-- avoid expanding into adjacent material that is outside the scope contract
-- do not replace a hard learner requirement with a convenient implementation shortcut unless the final report names the deviation
-
-### Phase 3: Backward-Chain To The Learner Boundary
-
-Work backward from the target capability by repeatedly asking:
-
-`What must the learner know or be able to do immediately before this is achievable?`
-
-Continue until you reach the learner start boundary. Express intermediate items as learning questions, not vague topic blobs.
-
-### Phase 4: Normalize Into Atomic Steps
-
-Apply the contract in `references/step-contract.md`.
-
-- split broad or overloaded items
-- merge thin restatements that are not independently teachable
-- preserve one primary ordered progression
-- keep each step independently assessable
-
-### Phase 5: Infer Predecessor Judgments
-
-For each step, inspect **only earlier steps** as predecessor candidates.
-
-- mark `required` predecessors when the later step is not realistically achievable without them
-- mark `optional` predecessors when they improve fluency, speed, or confidence but are not strictly necessary
-- never reference future steps
-
-### Phase 6: Audit Before Writing
-
-Use `references/audit-checklist.md` and revise until the progression is:
-
-- faithful to the planning contract or explicit about deviations
-- complete enough for the success criteria
-- minimal enough to avoid redundant steps
-- appropriately scoped to the learner boundary
-- explicit about assumptions and uncertainty
-
-### Phase 7: Write The Final Report
-
-Follow `templates/curriculum_report_template.md` exactly.
-
-Output rules:
-
-- produce a standard DeerFlow markdown report, not JSON
-- use one authoritative ordered sequence with stable step IDs: `S1`, `S2`, `S3`, ...
-- keep the same section headings and per-step field order every time
-- use inline citations in DeerFlow style for externally grounded claims: `[citation:Title](URL)`
-- if evidence is weak or conflicting, record that under `## Assumptions And Open Uncertainties`
-- save the final report to `/mnt/user-data/outputs/curriculum_discovery_{topic_slug}_{YYYYMMDD}.md`
+- `references/process.md` for semantic workflow, contract fidelity, conflict resolution, and exit conditions
+- `references/step-contract.md` for atomic step shape, dependency rules, and predecessor semantics
+- `references/audit-checklist.md` for the final semantic audit
+- `templates/curriculum_report_template.md` for the exact markdown output structure
+- `references/runtime-conventions.md` for subagent and file-output mechanics
 
 ## Subagent Use
 
@@ -156,9 +95,6 @@ If a task cannot be cleanly decomposed into independent branches, research direc
 
 Before returning the report, verify:
 
-- every `must_cover`, `must_not_cover`, hard constraint, and evidence-of-success item is mapped or explicitly marked as deferred, at risk, or infeasible
-- the progression starts at or just above the learner boundary
-- each step is atomic and teachable
-- each dependency points backward only
-- the report is markdown-natural but parser-stable
-- the deep-research phase has not taken on downstream mechanical work
+- the audit checklist has passed
+- the report follows the template exactly
+- runtime conventions have been followed for subagents or file output

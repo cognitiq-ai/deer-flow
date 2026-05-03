@@ -121,14 +121,7 @@ For each step, inspect earlier steps only.
 
 Run the checklist in `audit-checklist.md` before writing the final report.
 
-The audit must include a contract-fidelity pass:
-
-- map each `must_cover` item to supporting step IDs
-- map each evidence-of-success item to supporting step IDs
-- confirm every `must_not_cover` item remains excluded or explicitly justified
-- check that tooling recommendations do not override hard tooling constraints
-- identify any target-outcome narrowing, benchmark substitution, assessment-mode substitution, or hidden prerequisite expansion
-- move weakly supported assumptions into `## Assumptions And Open Uncertainties`
+Revise the progression until the checklist passes. Keep semantic audit work in this skill; leave structural parsing and typed validation to downstream stages.
 
 ## Conflict Resolution
 

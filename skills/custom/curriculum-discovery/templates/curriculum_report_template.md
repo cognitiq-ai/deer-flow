@@ -139,5 +139,5 @@ Use this exact structure when generating the final curriculum discovery report. 
 5. Preserve the field labels and field order inside every step.
 6. Use DeerFlow inline citations for external claims in body text: `[citation:Title](URL)`.
 7. Keep the report in natural markdown prose, but do not invent new top-level sections.
-8. Include every hard planning-contract item in the `Contract Fidelity Matrix`; use `Supporting Step IDs: None` only when the item is explicitly deferred, excluded, at risk, or infeasible.
-9. Use `Scope Deviations And Downscoping` to make any smaller MVP target visible instead of silently rewriting the learner goal.
+8. Preserve all listed subsections under `## Coverage And Coherence Audit`.
+9. Use only the listed status values in `Contract Fidelity Matrix`: `Covered`, `Deferred`, `Excluded`, `At Risk`, or `Infeasible`.

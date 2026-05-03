@@ -26,6 +26,8 @@ Use a separate parser or LLM call to extract:
 - ordered steps
 - required predecessors
 - optional predecessors
+- contract fidelity matrix
+- scope deviations and downscoping
 - audit findings
 - assumptions and uncertainties
 
@@ -44,6 +46,7 @@ Minimum checks:
 - `required` and `optional` predecessor lists are distinct
 - each step has the full required field set
 - the report includes the audit and assumptions sections
+- the contract fidelity matrix uses only template-defined status values
 
 ### 3. Repair Or Reject
 
