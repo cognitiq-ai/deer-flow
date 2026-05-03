@@ -84,6 +84,16 @@ Use this exact structure when generating the final curriculum discovery report. 
 
 ## Coverage And Coherence Audit
 
+### Contract Fidelity Matrix
+
+| Contract Item | Source Field | Supporting Step IDs | Status | Notes |
+|---------------|--------------|---------------------|--------|-------|
+| [Must-cover, evidence-of-success, hard constraint, or exclusion item] | [e.g., `must_cover`, `evidence_of_success`, `tooling_constraints`, `must_not_cover`] | [S1, S2, or None] | [Covered / Deferred / Excluded / At Risk / Infeasible] | [Brief rationale, deviation, or assumption] |
+
+### Scope Deviations And Downscoping
+
+- [State `None` if the report preserves the planning contract. Otherwise identify each target-outcome narrowing, benchmark substitution, tooling substitution, assessment substitution, or must-cover item that was deferred.]
+
 ### Coverage Against Success Criteria
 
 - [State whether the progression collectively supports the success criteria]
@@ -106,7 +116,7 @@ Use this exact structure when generating the final curriculum discovery report. 
 
 ### Scope And Exclusion Check
 
-- [Confirm alignment with must-cover and must-not-cover constraints]
+- [Confirm alignment with must-cover and must-not-cover constraints, including any justified deviations from the contract fidelity matrix]
 
 ## Assumptions And Open Uncertainties
 
@@ -129,3 +139,5 @@ Use this exact structure when generating the final curriculum discovery report. 
 5. Preserve the field labels and field order inside every step.
 6. Use DeerFlow inline citations for external claims in body text: `[citation:Title](URL)`.
 7. Keep the report in natural markdown prose, but do not invent new top-level sections.
+8. Include every hard planning-contract item in the `Contract Fidelity Matrix`; use `Supporting Step IDs: None` only when the item is explicitly deferred, excluded, at risk, or infeasible.
+9. Use `Scope Deviations And Downscoping` to make any smaller MVP target visible instead of silently rewriting the learner goal.

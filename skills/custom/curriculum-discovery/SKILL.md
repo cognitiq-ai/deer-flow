@@ -55,11 +55,12 @@ If any of these are missing or ambiguous enough to block correct planning, ask f
 Own only the semantic planning work that cannot be deferred:
 
 - ground the target outcome in the real domain
+- preserve the planning contract unless deviations are explicitly declared
 - map the learner start boundary onto that domain
 - backward-chain from the target outcome to the learner boundary
 - normalize the result into atomic, independently teachable steps
 - infer predecessor relationships only among earlier steps
-- run a coherence and coverage audit
+- run a contract-fidelity, coherence, and coverage audit
 - produce the final markdown report
 
 ## Workflow
@@ -73,6 +74,7 @@ Restate the planning brief in operational terms:
 - what must be covered
 - what must be excluded
 - what evidence counts as success
+- which constraints are hard requirements rather than preferences
 
 ### Phase 2: Ground The Target Outcome
 
@@ -82,6 +84,7 @@ Use research to determine what the target capability really requires in the doma
 - prefer authoritative and current sources
 - note conflicts or disagreements explicitly
 - avoid expanding into adjacent material that is outside the scope contract
+- do not replace a hard learner requirement with a convenient implementation shortcut unless the final report names the deviation
 
 ### Phase 3: Backward-Chain To The Learner Boundary
 
@@ -112,6 +115,7 @@ For each step, inspect **only earlier steps** as predecessor candidates.
 
 Use `references/audit-checklist.md` and revise until the progression is:
 
+- faithful to the planning contract or explicit about deviations
 - complete enough for the success criteria
 - minimal enough to avoid redundant steps
 - appropriately scoped to the learner boundary
@@ -152,6 +156,7 @@ If a task cannot be cleanly decomposed into independent branches, research direc
 
 Before returning the report, verify:
 
+- every `must_cover`, `must_not_cover`, hard constraint, and evidence-of-success item is mapped or explicitly marked as deferred, at risk, or infeasible
 - the progression starts at or just above the learner boundary
 - each step is atomic and teachable
 - each dependency points backward only
