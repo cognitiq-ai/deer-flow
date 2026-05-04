@@ -33,11 +33,11 @@ This file captures specific operating constraints for this skill.
 
 ## Output Conventions
 
-- Save the final report to `/mnt/user-data/outputs/`.
 - Use markdown, not JSON.
 - Prefer stable headings and fixed field labels for downstream parsing.
 - Use DeerFlow inline citations for externally grounded claims:
   - `[citation:Title](URL)`
+- For final report artifact generation, follow `references/report-artifact.md`.
 
 ## Responsibility Boundary
 

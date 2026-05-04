@@ -13,10 +13,12 @@ Use this skill to turn a normalized planning brief into a backward-designed lear
 curriculum-discovery/
 ├── SKILL.md
 ├── references/
+│   ├── orchestration.md
 │   ├── process.md
 │   ├── step-contract.md
 │   ├── runtime-conventions.md
 │   ├── audit-checklist.md
+│   ├── report-artifact.md
 │   ├── examples.md
 │   └── validation-handoff.md
 └── templates/
@@ -25,16 +27,10 @@ curriculum-discovery/
 
 ## Before You Start
 
-Before your first substantive response, read:
-
-1. `references/process.md`
-2. `references/step-contract.md`
-3. `templates/curriculum_report_template.md`
+Before your first substantive response, read `references/orchestration.md` and follow its `Load Skill Contracts` phase.
 
 Read these when needed:
 
-- `references/runtime-conventions.md` before using subagents or preparing the final output file
-- `references/audit-checklist.md` before finalizing the report
 - `references/examples.md` when the right step granularity is unclear
 - `references/validation-handoff.md` only when coordinating with downstream parsing or DAG materialization work
 
@@ -61,17 +57,19 @@ Own only the semantic curriculum-planning work:
 - normalize the result into atomic, independently teachable steps
 - infer predecessor relationships only among earlier steps
 - run a contract-fidelity, coherence, and coverage audit
-- produce the final markdown report
+- produce the final markdown report artifact
 
 ## Workflow
 
 Follow these files as the authoritative contracts:
 
+- `references/orchestration.md` for the required top-level execution order
 - `references/process.md` for semantic workflow, contract fidelity, conflict resolution, and exit conditions
 - `references/step-contract.md` for atomic step shape, dependency rules, and predecessor semantics
 - `references/audit-checklist.md` for the final semantic audit
 - `templates/curriculum_report_template.md` for the exact markdown output structure
-- `references/runtime-conventions.md` for subagent and file-output mechanics
+- `references/report-artifact.md` for final markdown artifact generation
+- `references/runtime-conventions.md` for runtime mechanics
 
 ## Subagent Use
 
@@ -95,6 +93,4 @@ If a task cannot be cleanly decomposed into independent branches, research direc
 
 Before returning the report, verify:
 
-- the audit checklist has passed
-- the report follows the template exactly
-- runtime conventions have been followed for subagents or file output
+- the required top-level sequence in `references/orchestration.md` has been completed

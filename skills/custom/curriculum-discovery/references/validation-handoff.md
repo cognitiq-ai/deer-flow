@@ -8,9 +8,9 @@ Keep the skill narrowly scoped to semantic planning while making the downstream 
 
 ## Expected Handoff Artifact
 
-The skill should hand off one parser-stable markdown report that follows `templates/curriculum_report_template.md`.
+The skill should hand off one parser-stable markdown report artifact that follows `templates/curriculum_report_template.md` and `references/report-artifact.md`.
 
-That report is the only authoritative input to the downstream structured pipeline.
+That report artifact is the only authoritative input to the downstream structured pipeline. The downstream pipeline may consume the artifact from a file path or from inline markdown when no artifact target was available.
 
 ## Downstream Stages
 
